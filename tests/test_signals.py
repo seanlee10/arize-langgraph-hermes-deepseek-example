@@ -14,33 +14,32 @@ def test_pct():
     assert pct(None, 1) is None and pct(1, None) is None and pct(1, 0) is None
 
 
-def test_sep17_matches_report():
+def test_sep17_matches_report_prices_and_av_options():
     sig = _signals_for("2026-09-17")
     assert sig.returns["1d"]["NVDA"] == 2.54 and sig.returns["1d"]["SMH"] == 2.76
     assert sig.rel_spread["1d"] == -0.22
     assert sig.returns["3d"]["NVDA"] == 3.97 and sig.returns["3d"]["SMH"] == 3.53
     assert sig.rel_spread["3d"] == 0.44
-    assert sig.put_changes["1d"] == {200: -2.86, 210: -3.81, 220: -5.08}
-    assert sig.put_changes["3d"] == {200: -20.93, 210: -18.88, 220: -13.78}
-    assert sig.put_changes["anchor"] == {200: -20.52, 210: -12.81, 220: -2.61}
+    assert sig.put_changes["1d"] == {200: -45.1, 210: -39.77, 220: -33.04}
+    assert sig.put_changes["3d"] == {200: -56.59, 210: -51.14, 220: -42.31}
+    assert sig.put_changes["anchor"] == {200: -56.36, 210: -47.48, 220: -34.78}
     assert sig.returns["anchor"]["NVDA"] == 0.82 and sig.returns["anchor"]["SMH"] == 1.36
     assert sig.base_dates["3d"].isoformat() == "2026-09-14"
-    # Sep-16 IV was N/A, so IV compares against the last verified snapshot (Sep-15).
-    assert sig.iv[200].prior == 34.66 and sig.iv[200].prior_date.isoformat() == "2026-09-15"
+    assert sig.iv[200].prior == 35.63 and sig.iv[200].prior_date.isoformat() == "2026-09-16"
     assert sig.iv_surface_up is False
-    assert sig.convexity_order_1d == [200, 210, 220]
-    assert sig.put_freshness_1d == ("late_session_last", "latest_snapshot")
+    assert sig.convexity_order_1d == [220, 210, 200]
+    assert sig.put_freshness_1d == ("EOD", "EOD")
     assert sig.conditions == {"nvda_underperforms": "partial", "iv_surface_up": "false", "far_otm_leads": "false"}
 
 
-def test_sep16_matches_report():
+def test_sep16_matches_report_prices_and_av_options():
     sig = _signals_for("2026-09-16")
     assert sig.rel_spread["1d"] == 0.18
-    assert sig.put_changes["1d"] == {200: -10.76, 210: -8.83, 220: -3.67}
+    assert sig.put_changes["1d"] == {200: -13.31, 210: -12.3, 220: -8.57}
     assert sig.returns["3d"]["NVDA"] == -2.01 and sig.returns["3d"]["SMH"] == -4.04
-    assert sig.put_changes["3d"] == {200: 32.35, 210: 30.17, 220: 31.11}
+    assert sig.put_changes["3d"] == {200: 28.57, 210: 25.21, 220: 24.44}
     assert sig.returns["anchor"]["SOXL"] == -6.62  # official close 103.97 (report used 104.03: -6.57)
-    assert sig.iv_surface_up is None and sig.conditions["iv_surface_up"] == "unknown"
+    assert sig.iv_surface_up is False and sig.conditions["iv_surface_up"] == "false"  # 200P up, 210P/220P flat
     assert sig.conditions["nvda_underperforms"] == "false"
     assert sig.convexity_order_1d == [220, 210, 200]
 

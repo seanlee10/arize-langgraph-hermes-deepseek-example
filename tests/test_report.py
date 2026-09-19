@@ -42,9 +42,9 @@ def test_report_tables_come_from_code():
     assert "**Bubble Signal Score: `8.2 / 10` — 전회 8.4 대비 `-0.2`.** 오늘은 de-confirmation." in md
     assert "| **NVDA** | **$219.34** | **+2.54%** |" in md
     assert "| **NVDA − SMH** | — | **-0.22%p** |" in md
-    assert "| **$200P** | $3.05 | $3.10 | $3.08 | $3.06 | -2.86% | 34.90% | 4,222 | 43,504 |" in md
-    assert "recorded-to-recorded" in md and "2026-09-15" in md  # freshness + last-verified IV notes
-    assert "-20.93%" in md and "| **최근 3거래일** |" in md
+    assert "| **$200P** | $1.66 | $1.68 | $1.67 | $1.68 | -45.10% | 33.68% | 5,516 | 44,118 |" in md
+    assert "EOD → 2026-09-17 EOD" in md and "(2026-09-16)" in md  # freshness + IV comparison notes
+    assert "-56.59%" in md and "| **최근 3거래일** |" in md
     assert "`TRIGGERED, BUT FURTHER DE-CONFIRMING`" in md
     assert "[1]: https://reuters.com/huawei" in md and "gap note" in md
     assert "Analyst disagreement" not in md and "단일 analyst" not in md
