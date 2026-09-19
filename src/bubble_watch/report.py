@@ -1,8 +1,7 @@
 """Markdown report: every table cell comes from code; the writer's Narrative supplies the prose."""
 from __future__ import annotations
 
-from decimal import ROUND_HALF_UP, Decimal
-
+from .facts import CONDITION_LABEL, condition_text, md, money, pp, spct, windows
 from .models import AnalystView, DailyRecord, PutQuote, Reconciliation, Verdict, WatchState, round1
 from .writer import Narrative
 
@@ -13,30 +12,14 @@ VERDICT_LABEL = {
     Verdict.TRIGGERED_FURTHER_DE_CONFIRMING: "TRIGGERED, BUT FURTHER DE-CONFIRMING",
     Verdict.CONFIRMED: "CONFIRMED",
 }
-_CONDITION_LABEL = {
-    "nvda_underperforms": "{t} < {p} (여러 날 지속)",
-    "iv_surface_up": "IV surface 전체 상승",
-    "far_otm_leads": "${lo}P가 다른 put보다 빠르게 상승",
-}
-_CONDITION_VALUE = {"true": "성립", "false": "불성립", "unknown": "데이터 없음"}
-# "partial" means something different per condition.
-_PARTIAL_LABEL = {"nvda_underperforms": "부분 성립 (1일만)", "iv_surface_up": "판단 불가 (한 단계 이내 상승)"}
 _MODE_LABEL = {"agree": "두 analyst 합의", "agree_after_rebuttal": "반박 라운드 후 합의",
                "disagree": "반박 라운드 후에도 불일치 → 평균 점수, 더 보수적인 판정", "single": "단일 analyst 기준"}
 
 
-def money(v: float | None) -> str:
-    if v is None:
-        return "N/A"
-    return f"${Decimal(str(v)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP):,}"
 
 
-def spct(v: float | None) -> str:
-    return "N/A" if v is None else f"{v:+.2f}%"
 
 
-def _pp(v: float | None) -> str:
-    return "N/A" if v is None else f"{v:+.2f}%p"
 
 
 def _iv(v: float | None) -> str:
@@ -47,8 +30,6 @@ def _num(v: int | None) -> str:
     return "N/A" if v is None else f"{v:,}"
 
 
-def _md(d) -> str:
-    return f"{d.month}/{d.day}"
 
 
 def _put_basis_note(record: DailyRecord) -> str:
@@ -96,11 +77,11 @@ def render_report(state: WatchState, record: DailyRecord, recon: Reconciliation,
     head = f"**Bubble Signal Score: `{recon.score:.1f} / 10`"
     head += f" — 전회 {prior:.1f} 대비 `{delta:+.1f}`.**" if delta is not None else ".**"
     out = [f"## {t} Bubble Signal Watch — {record.date} 미국장 마감", "", f"{head} {narrative.headline_ko}", "",
-           f"| 지표 | {_md(record.date)} | 판정 |", "|---|---:|---|",
+           f"| 지표 | {md(record.date)} | 판정 |", "|---|---:|---|",
            f"| **Bubble Signal Score** | **{recon.score:.1f}** | **{'N/A' if delta is None else f'{delta:+.1f}'}** |",
            f"| **{t}** | **{money(close[t])}** | **{spct(r1[t])}** |",
            f"| **{p}** | **{money(close[p])}** | **{spct(r1[p])}** |",
-           f"| **{t} − {p}** | — | **{_pp(sig.rel_spread['1d'])}** |",
+           f"| **{t} − {p}** | — | **{pp(sig.rel_spread['1d'])}** |",
            f"| **{lev}** | **{money(close[lev])}** | **{spct(r1[lev])}** |", "", narrative.tape_ko, ""]
 
     strikes = " / ".join(f"${k}" for k in state.strikes)
@@ -113,23 +94,21 @@ def render_report(state: WatchState, record: DailyRecord, recon: Reconciliation,
                    f"{spct(sig.put_changes['1d'][k])} | {_iv(q.iv)} | {_num(q.volume)} | {_num(q.oi)} |")
     out += ["", _iv_note(record, state), "", narrative.options_ko, ""]
 
-    anchor = state.anchors[0] if state.anchors else None
-    windows = [("1d", "1일"), ("3d", "최근 3거래일"), ("anchor", f"{_md(anchor.date)} 이후" if anchor else "anchor 이후")]
-    out += [f"### {' / '.join(label for _, label in windows)}", "",
+    wins = windows(state)
+    out += [f"### {' / '.join(label for _, label in wins)}", "",
             "| 구간 | " + " | ".join([*state.symbols, *(f"${k}P" for k in state.strikes)]) + " |",
             "|---|" + "---:|" * (len(state.symbols) + len(state.strikes))]
-    for w, label in windows:
+    for w, label in wins:
         cells = [spct(sig.returns[w][s]) for s in state.symbols] + [spct(sig.put_changes[w][k]) for k in state.strikes]
         out.append(f"| **{label}** | " + " | ".join(cells) + " |")
-    bases = ", ".join(f"{label}: {sig.base_dates.get(w) or 'N/A'} 대비" for w, label in windows)
+    bases = ", ".join(f"{label}: {sig.base_dates.get(w) or 'N/A'} 대비" for w, label in wins)
     out += ["", (f"기준일 — {bases}. {lev}는 daily 3× 레버리지 ETF라 multi-day 수익률의 절대 크기를 "
                  f"{t}/{p}와 직접 비교하면 안 된다."), ""]
 
     lo = min(state.strikes)
     out += [f"### 판정: `{VERDICT_LABEL[recon.verdict]}`", "", narrative.verdict_ko, "", narrative.watch_ko, "",
             "| 재확인 조건 | 오늘 |", "|---|---|"]
-    out += [f"| {_CONDITION_LABEL[k].format(t=t, p=p, lo=lo)} | "
-            f"{_PARTIAL_LABEL.get(k, '부분 성립') if v == 'partial' else _CONDITION_VALUE[v]} |"
+    out += [f"| {CONDITION_LABEL[k].format(t=t, p=p, lo=lo)} | {condition_text(k, v)} |"
             for k, v in sig.conditions.items()]
 
     out += ["", "### Analyst views", "", f"{_MODE_LABEL[recon.mode]}.", "",

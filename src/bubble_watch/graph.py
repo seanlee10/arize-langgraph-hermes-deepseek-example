@@ -13,6 +13,7 @@ from langgraph.graph import END, START, StateGraph
 
 from .agents.base import Analyst, AnalystError, AnalystResult
 from .agents.prompts import analyst_brief, gap_fill_brief, rebuttal_brief
+from .facts import leaked_identifiers
 from .market_data.base import GapFill, MarketDataProvider, MarketSnapshot, apply_fills, find_gaps
 from .models import DailyRecord, Reconciliation, WatchState, round1
 from .reconcile import reconcile
@@ -171,6 +172,8 @@ def build_graph(deps: Deps):
             except Exception as exc:
                 notes.append(f"writer failed, used analyst text: {exc}")
         narrative = narrative or fallback_narrative(recon, views)
+        if leaks := leaked_identifiers(" ".join(narrative.model_dump().values())):
+            notes.append(f"서술에 코드 이름이 남음: {', '.join(leaks)}")
         prior = _prior_score(w, rec.date)
         rec = rec.model_copy(update={
             "score": recon.score, "score_delta": None if prior is None else round1(recon.score - prior),

@@ -75,6 +75,7 @@ far_otm_leads: 가장 OTM put이 다른 put보다 빠르게 상승). partial은 
 3. 직전 점수 대비 score(0–10, 소수 첫째 자리)를 제시하고 변화 이유를 설명하라. ±1.0 초과 변화는 강한 근거가 있을 때만.
 4. verdict: NOT_TRIGGERED, TRIGGERED, TRIGGERED_DE_CONFIRMING, TRIGGERED_FURTHER_DE_CONFIRMING, CONFIRMED 중 하나.
 5. watch_conditions_ko에는 무엇이 thesis를 재확인하거나 무효화하는지 적어라.
+6. *_ko 필드는 사람이 읽는 한국어 문장으로 써라. 신호 JSON의 키 이름(rel_spread 등)이나 'x=true' 같은 표기를 쓰지 마라.
 
 ## 응답 형식
 모든 *_ko 필드는 한국어. 아래 AnalystView JSON Schema를 따르는 JSON 객체 하나만 ```json 블록으로 출력하라.

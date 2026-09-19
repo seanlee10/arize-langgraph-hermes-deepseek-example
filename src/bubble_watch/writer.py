@@ -5,6 +5,7 @@ import httpx
 from pydantic import BaseModel
 
 from .agents.base import extract_json
+from .facts import korean_facts, leaked_identifiers
 from .models import AnalystView, DailyRecord, Reconciliation, WatchState
 
 SYSTEM_WRITER = (
@@ -12,6 +13,8 @@ SYSTEM_WRITER = (
     "표와 수치는 코드가 따로 렌더링하므로, 서술에서 인용하는 숫자는 반드시 제공된 값 그대로 써라(새 숫자 금지). "
     "문체: 간결한 한국어 리서치 톤, 핵심 수치와 결론은 **굵게**, de-confirmation·convexity·IV surface 같은 "
     "영어 용어는 그대로 섞어 쓴다. 촉매를 언급할 때는 제공된 번호로 [n] 형태로 인용한다. "
+    "변수명·코드 이름(예: rel_spread, far_otm_leads)이나 'x=true', '[220, 210, 200]' 같은 표기는 절대 쓰지 말고, "
+    "'NVDA가 SMH를 0.87%p underperform했다', '$200P가 가장 크게 빠졌다'처럼 사람이 읽는 문장으로 쓴다. "
     "JSON 객체 하나만 출력한다."
 )
 
@@ -44,10 +47,8 @@ def writer_brief(state: WatchState, record: DailyRecord, recon: Reconciliation,
 - score {recon.score}, verdict {recon.verdict.value}, reconciliation mode {recon.mode}
 - flags: {'; '.join(recon.flags) or '없음'}
 
-## 계산된 신호 (확정값, 숫자는 여기서만 인용)
-```json
-{record.signals.model_dump_json(indent=2) if record.signals else '{}'}
-```
+## 오늘의 확정 수치 (숫자는 여기서만 인용)
+{korean_facts(state, record) if record.signals else '(없음)'}
 
 ## 촉매 (번호로 인용)
 {catalysts}
@@ -93,7 +94,12 @@ class XaiWriter:
             if r.status_code >= 400:
                 raise WriterError(f"writer HTTP {r.status_code}: {r.text[:300]}")
             try:
-                return Narrative.model_validate(extract_json(r.json()["choices"][0]["message"]["content"] or ""))
+                narrative = Narrative.model_validate(extract_json(r.json()["choices"][0]["message"]["content"] or ""))
             except (ValueError, KeyError, IndexError) as exc:
                 error = str(exc)
+                continue
+            leaks = leaked_identifiers(" ".join(narrative.model_dump().values()))
+            if not leaks or attempt == 1:
+                return narrative  # a leak surviving the retry is reported by the graph, not fatal
+            error = f"코드 이름/변수 표기가 문장에 남아 있다: {', '.join(leaks)}. 사람이 읽는 한국어 문장으로 바꿔라"
         raise WriterError(f"writer returned invalid narrative JSON twice: {error[:300]}")

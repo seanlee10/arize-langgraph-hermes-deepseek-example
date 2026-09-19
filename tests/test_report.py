@@ -3,9 +3,10 @@ import json
 import httpx
 import pytest
 
+from bubble_watch.facts import money
 from bubble_watch.models import AnalystView
 from bubble_watch.reconcile import reconcile
-from bubble_watch.report import money, render_report
+from bubble_watch.report import render_report
 from bubble_watch.signals import compute_signals
 from bubble_watch.state_store import seed_state
 from bubble_watch.writer import Narrative, WriterError, XaiWriter, fallback_narrative, writer_brief
@@ -66,6 +67,8 @@ def test_writer_brief_numbers_catalysts_and_fallback():
     s, rec, recon = _setup(views)
     brief = writer_brief(s, rec, recon, views)
     assert "[1] Huawei AI chips" in brief and "headline_ko" in brief
+    assert "NVDA − SMH 상대 성과" in brief  # Korean fact sheet, not raw signal JSON
+    assert "rel_spread" not in brief and "far_otm_leads" not in brief and '"base_dates"' not in brief
     fb = fallback_narrative(recon, views)
     assert fb.tape_ko == "tape 8.2"
 
