@@ -56,3 +56,15 @@ def test_ensure_dsh_home_writes_settings_once(tmp_path):
     path.write_text("custom: true\n")
     ensure_dsh_home(str(tmp_path / "home"), "grok-4.6")
     assert path.read_text() == "custom: true\n"
+
+
+def test_exa_patch_is_rendered_with_absolute_plugin_entry(tmp_path):
+    from bubble_watch.agents.dsh_client import render_exa_patch
+
+    repo = tmp_path / "dsh-repo"
+    path = render_exa_patch(str(tmp_path / "home"), str(repo))
+    text = path.read_text()
+    assert path.parent == tmp_path / "home"
+    assert f"name: '{repo}/packages/web/web-search-exa/lib/index.js'" in text
+    assert "searchProvider: exa" in text and "!!js process.env.EXA_API_KEY" in text
+    assert "{exa_plugin_entry}" not in text

@@ -74,3 +74,13 @@ def test_settings_defaults_and_missing_names(tmp_path, monkeypatch):
     assert s.dsh_model == "grok-4.6" and s.writer_model == "grok-4.6"
     assert s.hermes_model is None
     assert missing_required(s) == ["HERMES_API_KEY"]
+
+
+def test_inline_comment_after_empty_value_is_not_a_value(tmp_path, monkeypatch):
+    for name in ("EXA_API_KEY", "HERMES_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    env = tmp_path / ".env"
+    env.write_text("EXA_API_KEY=                     # dsh web_search via Exa\nHERMES_API_KEY=real-secret  # note\n")
+    s = load_settings(env)
+    assert s.exa_api_key == ""
+    assert s.hermes_api_key == "real-secret"

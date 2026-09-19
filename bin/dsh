@@ -1,6 +1,9 @@
 #!/bin/sh
 # dsh launcher for the bubble-watch dsh analyst: the harness needs Node ^22.19 || >=24.
+# Runs the BUILT CLI (apps/cli/lib/bin.js). Launching the TypeScript source through tsx mixes
+# src and lib copies of the plugins; symbol-keyed services (e.g. the tool scheduler) then fail
+# to resolve and every tool call dies with "reading 'prepare'".
 # DSH_NODE and DSH_REPO override the defaults below.
 NODE="${DSH_NODE:-$HOME/.nvm/versions/node/v24.21.0/bin/node}"
-REPO="${DSH_REPO:-$HOME/projects/deepseek-harness}"
-cd "$REPO" && exec "$NODE" --import tsx/esm apps/cli/src/bin.ts "$@"
+export DSH_REPO="${DSH_REPO:-$HOME/projects/deepseek-harness}"; REPO="$DSH_REPO"
+exec "$NODE" "$REPO/apps/cli/lib/bin.js" "$@"

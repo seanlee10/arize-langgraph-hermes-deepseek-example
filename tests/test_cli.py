@@ -39,7 +39,7 @@ def test_doctor_reports_names_never_values(tmp_path, monkeypatch):
     by_name = {c[0]: c for c in checks}
     assert by_name["env HERMES_API_KEY"][1] is False
     assert by_name["xAI model grok-4.6"][1] is True
-    assert by_name["Hermes gateway"][1] is False
+    assert by_name["Hermes gateway"][1] is False and "skipped" in by_name["Hermes gateway"][3]
     assert (tmp_path / "dsh" / "settings.yaml").exists()
     assert not any("xai-SECRET" in c[3] for c in checks)
 

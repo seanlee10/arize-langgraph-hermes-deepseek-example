@@ -67,6 +67,9 @@ def doctor_checks(settings: Settings, client: httpx.Client) -> list[tuple[str, b
                 checks.append((f"xAI model {model}", model in ids, True, detail))
         except httpx.HTTPError as exc:
             checks.append(("xAI API", False, True, f"unreachable: {type(exc).__name__}"))
+    if not settings.hermes_api_key:
+        checks.append(("Hermes gateway", False, True, "skipped: HERMES_API_KEY is not set"))
+        return checks
     try:
         r = client.get(settings.hermes_api_url.rstrip("/") + "/models",
                        headers={"Authorization": f"Bearer {settings.hermes_api_key}"})

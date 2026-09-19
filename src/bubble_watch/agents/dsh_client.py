@@ -9,7 +9,8 @@ from ..config import PROJECT_ROOT, Settings
 from .base import AnalystError, AnalystResult, AskResult, ask_for_view
 from .prompts import SYSTEM_ANALYST
 
-EXA_PATCH = PROJECT_ROOT / "dsh" / "exa-search.patch.yml"
+EXA_PATCH_TEMPLATE = PROJECT_ROOT / "dsh" / "exa-search.patch.yml"
+EXA_PLUGIN_ENTRY = "packages/web/web-search-exa/lib/index.js"
 
 _SETTINGS_TEMPLATE = """\
 # Written by bubble-watch: registers xAI (Grok) for the dsh analyst through the llm-pi-ai adapter.
@@ -35,6 +36,15 @@ def ensure_dsh_home(dsh_home: str, model: str, provider: str = "xai",
     return path
 
 
+def render_exa_patch(dsh_home: str, dsh_repo: str) -> Path:
+    """Write the Exa overlay into DSH_HOME with the plugin's absolute entry path from the dsh checkout."""
+    path = Path(dsh_home) / "exa-search.patch.yml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    entry = Path(dsh_repo).expanduser() / EXA_PLUGIN_ENTRY
+    path.write_text(EXA_PATCH_TEMPLATE.read_text().replace("{exa_plugin_entry}", str(entry)))
+    return path
+
+
 def make_harness_factory(settings: Settings) -> Callable[[], Any]:
     def factory() -> Any:
         from deepseek_harness import DeepSeekHarness
@@ -44,7 +54,7 @@ def make_harness_factory(settings: Settings) -> Callable[[], Any]:
         patches: tuple[str, ...] = ()
         if settings.exa_api_key:
             env["EXA_API_KEY"] = settings.exa_api_key
-            patches = (str(EXA_PATCH),)
+            patches = (str(render_exa_patch(settings.dsh_home, settings.dsh_repo)),)
         return DeepSeekHarness(
             dsh_bin=settings.dsh_bin, dsh_home=settings.dsh_home, cwd=str(PROJECT_ROOT),
             provider=settings.dsh_provider, model=settings.dsh_model, patches=patches, env=env,

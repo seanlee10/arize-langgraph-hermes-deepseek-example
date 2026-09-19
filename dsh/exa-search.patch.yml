@@ -1,4 +1,6 @@
-# bubble-watch overlay: route dsh web_search through Exa (EXA_API_KEY) instead of DeepSeek search.
+# bubble-watch overlay TEMPLATE: route dsh web_search through Exa (EXA_API_KEY) instead of DeepSeek search.
+# render_exa_patch() writes it into DSH_HOME with {exa_plugin_entry} replaced by an absolute path:
+# a plugin `name` is not evaluated as !!js, and the bundle cannot resolve the package by name.
 - id: web
   config:
     searchProvider: exa
@@ -6,6 +8,6 @@
 
 - insert:
     - id: web-search-exa
-      name: '@deepseek-ai/dsh-web-search-exa'
+      name: '{exa_plugin_entry}'
       config:
         apiKey: !!js process.env.EXA_API_KEY

@@ -20,6 +20,7 @@ class Settings:
     hermes_api_key: str
     hermes_model: str | None
     dsh_bin: str
+    dsh_repo: str
     dsh_home: str
     dsh_provider: str
     dsh_model: str
@@ -36,7 +37,9 @@ class Settings:
 
 
 def _env(name: str, default: str = "") -> str:
-    return os.environ.get(name, default).strip()
+    value = os.environ.get(name, default).strip()
+    # python-dotenv reads `KEY=   # comment` (empty value + inline comment) as the comment text.
+    return default if value.startswith("#") else value
 
 
 def load_settings(env_file: str | Path | None = None) -> Settings:
@@ -49,6 +52,7 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         # Unset: the Hermes gateway uses its own configured model (set it to grok-4.6 there).
         hermes_model=_env("HERMES_ANALYST_MODEL") or None,
         dsh_bin=_env("DSH_BIN", str(PROJECT_ROOT / "bin" / "dsh")),
+        dsh_repo=_env("DSH_REPO", str(Path.home() / "projects" / "deepseek-harness")),
         dsh_home=_env("DSH_HOME", str(PROJECT_ROOT / ".dsh")),
         dsh_provider=_env("DSH_PROVIDER", "xai"),
         dsh_model=_env("DSH_ANALYST_MODEL", DEFAULT_MODEL),
