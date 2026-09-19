@@ -113,3 +113,30 @@ def test_all_failed_raises_and_dry_run_does_not_save(paths):
 def test_no_analysts_stops_after_signals(paths):
     final = _run(paths, [])
     assert final["record"].signals is not None and "report_path" not in final
+
+
+def test_agent_spans_nest_under_langgraph_node_spans(paths):
+    from openinference.instrumentation.langchain import LangChainInstrumentor
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    LangChainInstrumentor().instrument(tracer_provider=provider)
+    try:
+        state_path, reports = paths
+        hermes = FakeAnalyst("hermes", _view(7.0, "TRIGGERED_DE_CONFIRMING"), rebuttal=_view(7.9))
+        dsh = FakeAnalyst("dsh", _view(8.6, "TRIGGERED"), rebuttal=_view(8.2))
+        deps = Deps(market=FakeMarket(), analysts={"hermes": hermes, "dsh": dsh}, writer=FakeWriter(),
+                    tracer=get_tracer(provider), reports_dir=reports, state_path=state_path, save=False)
+        build_graph(deps).invoke({"day": DAY, "watch": load_state(state_path)})
+    finally:
+        LangChainInstrumentor().uninstrument()
+    spans = exporter.get_finished_spans()
+    by_id = {s.context.span_id: s for s in spans}
+    parent = {s.name: by_id[s.parent.span_id].name if s.parent and s.parent.span_id in by_id else None for s in spans}
+    assert len({s.context.trace_id for s in spans}) == 1  # one run, one trace
+    assert parent["hermes analyst"] == "analyst_hermes" and parent["dsh analyst"] == "analyst_dsh"
+    assert parent["hermes rebuttal"] == "rebuttal" and parent["report writer"] == "write_report"

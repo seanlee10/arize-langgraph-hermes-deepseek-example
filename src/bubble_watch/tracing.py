@@ -42,10 +42,25 @@ def shutdown_tracing(provider: Any) -> None:
         provider.shutdown()
 
 
+def _parent_context() -> Any:
+    """Parent for a sub-agent span. The LangChain instrumentor tracks node spans by run id without
+    making them the current OTel span, so inside a LangGraph node look the node span up explicitly;
+    otherwise these spans would each start a separate trace."""
+    if trace.get_current_span().get_span_context().is_valid:
+        return None  # already inside a traced context: use it
+    try:
+        from openinference.instrumentation.langchain import get_current_span
+        node_span = get_current_span()
+    except ImportError:  # LangChain instrumentor not installed
+        return None
+    return trace.set_span_in_context(node_span) if node_span is not None else None
+
+
 @contextlib.contextmanager
 def agent_span(tracer: trace.Tracer, name: str, *, input_value: Any, kind: str = "AGENT",
                attributes: dict[str, Any] | None = None) -> Iterator[trace.Span]:
-    with tracer.start_as_current_span(name, record_exception=False, set_status_on_exception=False) as span:
+    with tracer.start_as_current_span(name, context=_parent_context(), record_exception=False,
+                                      set_status_on_exception=False) as span:
         span.set_attribute(KIND, kind)
         span.set_attribute(INPUT, _text(input_value))
         for key, value in (attributes or {}).items():
