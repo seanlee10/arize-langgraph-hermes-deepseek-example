@@ -116,8 +116,8 @@ def render_report(state: WatchState, record: DailyRecord, recon: Reconciliation,
         cells = [spct(sig.returns[w][s]) for s in state.symbols] + [spct(sig.put_changes[w][k]) for k in state.strikes]
         out.append(f"| **{label}** | " + " | ".join(cells) + " |")
     bases = ", ".join(f"{label}: {sig.base_dates.get(w) or 'N/A'} 대비" for w, label in windows)
-    out += ["", f"기준일 — {bases}. {lev}는 daily 3× 레버리지 ETF라 multi-day 수익률의 절대 크기를 "
-                f"{t}/{p}와 직접 비교하면 안 된다.", ""]
+    out += ["", (f"기준일 — {bases}. {lev}는 daily 3× 레버리지 ETF라 multi-day 수익률의 절대 크기를 "
+                 f"{t}/{p}와 직접 비교하면 안 된다."), ""]
 
     lo = min(state.strikes)
     out += [f"### 판정: `{VERDICT_LABEL[recon.verdict]}`", "", narrative.verdict_ko, "", narrative.watch_ko, "",
@@ -130,8 +130,8 @@ def render_report(state: WatchState, record: DailyRecord, recon: Reconciliation,
     if recon.mode == "disagree":
         out += ["", "#### Analyst disagreement", ""]
         for name, v in views.items():
-            out += [f"**{name}** ({v.score:.1f}, {v.verdict.value}): {v.tape_read_ko}"
-                    + (f" — 반박: {v.rebuttal_ko}" if v.rebuttal_ko else ""), ""]
+            rebuttal = f" — 반박: {v.rebuttal_ko}" if v.rebuttal_ko else ""
+            out += [f"**{name}** ({v.score:.1f}, {v.verdict.value}): {v.tape_read_ko}{rebuttal}", ""]
     if recon.flags or notes:
         out += ["", "#### 데이터·실행 노트", ""] + [f"- {n}" for n in [*recon.flags, *notes]]
     if recon.catalysts:

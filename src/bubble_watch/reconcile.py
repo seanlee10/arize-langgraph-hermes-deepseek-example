@@ -29,8 +29,8 @@ def reconcile(views: dict[str, AnalystView], *, prior_score: float | None,
         raise ValueError("no analyst views to reconcile")
     flags = [f"{a}: score moved {v.score - prior_score:+.1f} from prior {prior_score}"
              for a, v in views.items() if prior_score is not None and abs(v.score - prior_score) > BIG_MOVE]
-    common = dict(scores={a: v.score for a, v in views.items()}, verdicts={a: v.verdict for a, v in views.items()},
-                  rebuttal_round=rebuttal_done, catalysts=merge_catalysts(views))
+    common = {"scores": {a: v.score for a, v in views.items()}, "verdicts": {a: v.verdict for a, v in views.items()},
+              "rebuttal_round": rebuttal_done, "catalysts": merge_catalysts(views)}
     if len(views) == 1:
         (agent, view), = views.items()
         return Reconciliation(mode="single", score=view.score, verdict=view.verdict,

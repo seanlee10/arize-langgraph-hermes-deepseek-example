@@ -1,4 +1,5 @@
 import datetime as dt
+from pathlib import Path
 
 import pytest
 
@@ -80,7 +81,7 @@ def test_agree_path_writes_report_and_saves_state(paths):
     assert recon.mode == "agree" and recon.score == 8.1 and rec.score_delta == -0.1
     assert rec.puts[220].iv == 30.21 and "puts.220.iv" in filler.prompts[0]
     assert rec.signals.returns["1d"]["NVDA"] == 1.34
-    report = open(final["report_path"]).read()
+    report = Path(final["report_path"]).read_text()
     assert "2026-09-18" in report and "`8.1 / 10`" in report
     saved = load_state(paths[0])
     assert saved.records[-1].date == DAY and saved.records[-1].score == 8.1

@@ -4,13 +4,19 @@ import pytest
 
 from bubble_watch.config import load_settings, missing_required
 from bubble_watch.models import (
-    AnalystView, DailyRecord, PutQuote, Verdict, WatchState, most_cautious, round1,
+    AnalystView,
+    DailyRecord,
+    PutQuote,
+    Verdict,
+    WatchState,
+    most_cautious,
+    round1,
 )
 
 
 def _view(**kw):
-    base = dict(score=8.26, score_delta_reasoning_ko="r", verdict="TRIGGERED", tape_read_ko="t",
-                watch_conditions_ko="w")
+    base = {"score": 8.26, "score_delta_reasoning_ko": "r", "verdict": "TRIGGERED", "tape_read_ko": "t",
+            "watch_conditions_ko": "w"}
     return AnalystView.model_validate({**base, **kw})
 
 

@@ -3,7 +3,8 @@ from __future__ import annotations
 
 import datetime as dt
 import math
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from ..models import Close, PutQuote
 from .base import MarketSnapshot

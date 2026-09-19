@@ -38,3 +38,8 @@ testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 120
+
+[tool.ruff.lint.per-file-ignores]
+# Fail-open by design: a failed analyst, data provider or writer degrades the run
+# (recorded as a note in the report) instead of aborting it.
+"src/bubble_watch/graph.py" = ["BLE001"]

@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from ..models import AnalystView
 from .prompts import retry_prompt
 
-_FENCED = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.S)
+_FENCED = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
 
 
 class AnalystError(RuntimeError):

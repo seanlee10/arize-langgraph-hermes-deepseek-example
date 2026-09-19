@@ -1,8 +1,9 @@
 """DeepSeek Harness as an analyst, driven in-process through its Python SDK (JSON-RPC over stdio)."""
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from ..config import PROJECT_ROOT, Settings
 from .base import AnalystError, AnalystResult, AskResult, ask_for_view

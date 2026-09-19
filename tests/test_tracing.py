@@ -38,9 +38,8 @@ def test_agent_span_sets_terminal_status(exporter):
     exp, tracer = exporter
     with agent_span(tracer, "ok", input_value="in"):
         pass
-    with pytest.raises(RuntimeError):
-        with agent_span(tracer, "bad", input_value="in"):
-            raise RuntimeError("boom")
+    with pytest.raises(RuntimeError), agent_span(tracer, "bad", input_value="in"):
+        raise RuntimeError("boom")
     spans = {s.name: s for s in exp.get_finished_spans()}
     assert spans["ok"].status.status_code == StatusCode.OK
     assert spans["ok"].attributes["openinference.span.kind"] == "AGENT"
