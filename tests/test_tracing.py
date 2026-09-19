@@ -67,3 +67,19 @@ def test_annotate_result_adds_output_session_and_tool_children(exporter):
     assert tool.parent.span_id == parent.context.span_id
     assert tool.attributes["openinference.span.kind"] == "TOOL" and tool.status.status_code == StatusCode.OK
     assert spans["bash"].status.status_code == StatusCode.ERROR
+
+
+def test_dsh_tool_calls_real_event_shape():
+    # Shape captured from a live dsh run (tool-call: name/arguments; tool-result: content).
+    events = [
+        {"type": "assistant/message", "data": {"message": {"role": "assistant", "content": [
+            {"type": "tool-call", "id": "call-1", "name": "web_search",
+             "arguments": '{"queries":["NVDA news September 18 2026"]}'}]}}},
+        {"type": "tool/result", "data": {"message": {"source": {"kind": "tool", "callId": "call-1"}, "content": [
+            {"type": "tool-result", "toolCallId": "call-1",
+             "content": [{"type": "text", "text": "1. Nscale files IPO"}], "isError": False}]}}},
+    ]
+    (call,) = dsh_tool_calls(events)
+    assert call["name"] == "web_search"
+    assert call["input"] == '{"queries":["NVDA news September 18 2026"]}'
+    assert call["output"] == [{"type": "text", "text": "1. Nscale files IPO"}] and call["error"] is False

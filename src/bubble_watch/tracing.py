@@ -91,12 +91,14 @@ def dsh_tool_calls(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
             kind, cid = block.get("type"), block.get("toolCallId") or block.get("id")
             if kind not in ("tool-call", "tool-result") or not cid:
                 continue
-            call = calls.setdefault(cid, {"id": cid, "name": block.get("toolName") or "tool", "input": None,
-                                          "output": None, "error": False})
+            call = calls.setdefault(cid, {"id": cid, "name": "tool", "input": None, "output": None, "error": False})
+            name = block.get("toolName") or block.get("name")
+            if name:
+                call["name"] = name
             if kind == "tool-call":
-                call["input"] = block.get("input", block.get("args"))
+                call["input"] = next((block[k] for k in ("input", "arguments", "args") if k in block), None)
             else:
-                call["output"] = block.get("output", block.get("result"))
+                call["output"] = next((block[k] for k in ("output", "content", "result") if k in block), None)
                 call["error"] = call["error"] or failed or bool(block.get("isError"))
     return list(calls.values())
 
