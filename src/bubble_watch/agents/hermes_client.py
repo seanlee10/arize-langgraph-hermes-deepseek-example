@@ -52,9 +52,12 @@ class HermesAnalyst:
         return ask_for_view(self.name, self.ask, prompt)
 
     def fill_gaps(self, prompt: str) -> list[GapFill]:
-        result = self.ask(prompt, system=SYSTEM_GAP_FILL)
-        try:
-            data = extract_json(result.text)
-            return [GapFill.model_validate(f) for f in data.get("fills") or []]
-        except ValueError as exc:
-            raise AnalystError(f"hermes gap fill returned invalid JSON: {str(exc)[:300]}") from exc
+        return parse_gap_fills(self.ask(prompt, system=SYSTEM_GAP_FILL).text)
+
+
+def parse_gap_fills(text: str) -> list[GapFill]:
+    try:
+        data = extract_json(text)
+        return [GapFill.model_validate(f) for f in data.get("fills") or []]
+    except ValueError as exc:
+        raise AnalystError(f"hermes gap fill returned invalid JSON: {str(exc)[:300]}") from exc

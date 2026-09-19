@@ -1,14 +1,14 @@
 # Bubble Watch
 
 Daily "NVDA Bubble Signal Watch" (Korean) produced by a LangGraph pipeline with two independent analyst
-sub-agents — **Hermes Agent** (HTTP gateway) and **DeepSeek Harness** (Python SDK) — both on Grok 4.6.
+sub-agents — **Hermes Agent** (one-shot CLI) and **DeepSeek Harness** (Python SDK) — both on Grok 4.6.
 Every number in the report is computed in code; the agents contribute research, cited catalysts and
 judgment, reconciled in code (one rebuttal round when they disagree). Both analysts search the web with
 Tavily (Hermes natively; dsh through `dsh/plugins/web-search-tavily.mjs`, since dsh ships no Tavily backend).
 Traced to Arize AX.
 
 ```
-fetch_market_data → fill_gaps (Hermes) → compute_signals
+fetch_market_data (Alpha Vantage) → fill_gaps (Hermes) → compute_signals
   → hermes_analyst ∥ dsh_analyst → reconcile ─┬→ write_report → save_state
                                    ↑ rebuttal ←┘ (only on disagreement)
 ```
@@ -19,12 +19,11 @@ fetch_market_data → fill_gaps (Hermes) → compute_signals
 2. dsh runtime: build your DeepSeek Harness checkout under Node ≥ 22.19
    (`PATH=~/.nvm/versions/node/v24.21.0/bin:$PATH pnpm install && pnpm run build` in `~/projects/deepseek-harness`).
    `bin/dsh` launches it with Node 24 (`DSH_NODE` / `DSH_REPO` override the paths).
-3. Hermes gateway on Grok 4.6: `uv run bubble-watch hermes-gateway` runs `hermes gateway run` with an
-   isolated `HERMES_HOME` (`.hermes-analyst/`, model `grok-4.6` via `xai`) and only the API server enabled.
-   Keys come from this project's `.env`; messaging-platform variables are stripped, so your main `~/.hermes`
-   bots never come online from it. (To trace Hermes internally too, install the `observability/arize` plugin.)
+3. Hermes (installed `hermes` CLI) needs no setup: each analyst call runs `hermes chat -Q` in an isolated
+   `HERMES_HOME` (`.hermes-analyst/`: model `grok-4.6` via `xai`, web tools only, tirith off), with keys passed
+   from this project's `.env`; your main `~/.hermes` and its messaging bots are never touched.
+   For a remote Hermes (e.g. EC2), set `HERMES_MODE=gateway` and run `uv run bubble-watch hermes-gateway` there.
 4. `cp .env.example .env` and fill in the keys (do this before step 3): `XAI_API_KEY` and `TAVILY_API_KEY`.
-   The gateway key needs no setup: it is generated into `.hermes-analyst/api_server.key` on first use.
 5. `uv run bubble-watch seed` then `uv run bubble-watch doctor`.
 
 ## Run

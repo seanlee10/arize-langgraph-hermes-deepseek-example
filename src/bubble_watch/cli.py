@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import os
+import shutil
 import sys
 from pathlib import Path
 from urllib.parse import urlparse
@@ -12,6 +13,7 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from .agents.dsh_client import DshAnalyst, ensure_dsh_home, make_harness_factory
+from .agents.hermes_cli import HermesCliAnalyst, ensure_hermes_home, hermes_env
 from .agents.hermes_client import HermesAnalyst
 from .config import DEFAULT_MODEL, Settings, load_settings, missing_required, resolve_hermes_key
 from .graph import Deps, build_graph
@@ -68,6 +70,10 @@ def doctor_checks(settings: Settings, client: httpx.Client) -> list[tuple[str, b
                 checks.append((f"xAI model {model}", model in ids, True, detail))
         except httpx.HTTPError as exc:
             checks.append(("xAI API", False, True, f"unreachable: {type(exc).__name__}"))
+    if settings.hermes_mode != "gateway":
+        path = shutil.which(settings.hermes_bin)
+        checks.append(("Hermes CLI (oneshot)", path is not None, True, path or f"{settings.hermes_bin} not on PATH"))
+        return checks
     try:
         r = client.get(settings.hermes_api_url.rstrip("/") + "/models",
                        headers={"Authorization": f"Bearer {resolve_hermes_key(settings)}"})
@@ -79,42 +85,13 @@ def doctor_checks(settings: Settings, client: httpx.Client) -> list[tuple[str, b
     return checks
 
 
-_HERMES_CONFIG = """\
-# Written by bubble-watch: isolated Hermes home for the analyst gateway (API server only).
-model:
-  default: {model}
-  provider: xai
-# The analyst only researches: web_search + web_extract. No terminal toolset means no shell
-# commands to pre-scan, so the tirith scanner (auto-downloaded from GitHub) is not needed.
-platform_toolsets:
-  api_server: [web]
-security:
-  tirith_enabled: false
-"""
-# Messaging platforms read their credentials from env; never let this gateway bring a bot online.
-_PLATFORM_ENV_PREFIXES = ("TELEGRAM_", "DISCORD_", "SLACK_", "WHATSAPP_", "SIGNAL_", "MATRIX_", "MATTERMOST_",
-                          "BLUEBUBBLES_", "WEIXIN_", "YUANBAO_", "QQBOT_", "TEAMS_", "MSGRAPH_", "EMAIL_", "SMS_")
 
-
-def ensure_hermes_home(home: Path, model: str) -> Path:
-    """Create the isolated HERMES_HOME with a Grok model config; never overwrite an existing one."""
-    home.mkdir(parents=True, exist_ok=True)
-    cfg = home / "config.yaml"
-    if not cfg.exists():
-        cfg.write_text(_HERMES_CONFIG.format(model=model))
-    return home
 
 
 def hermes_gateway_env(settings: Settings, home: Path) -> dict[str, str]:
-    env = {k: v for k, v in os.environ.items() if not k.startswith(_PLATFORM_ENV_PREFIXES)}
-    env.update(HERMES_HOME=str(home), API_SERVER_ENABLED="true", API_SERVER_KEY=resolve_hermes_key(settings),
-               API_SERVER_PORT=str(urlparse(settings.hermes_api_url).port or 8642),
-               XAI_API_KEY=settings.xai_api_key, TIRITH_ENABLED="false")
-    # Hermes auto-selects its web_search backend from these keys (Tavily ranks before Exa).
-    for name, value in (("TAVILY_API_KEY", settings.tavily_api_key), ("EXA_API_KEY", settings.exa_api_key)):
-        if value:
-            env[name] = value
-    return env
+    """hermes_env plus the API server (for HERMES_MODE=gateway)."""
+    return {**hermes_env(settings, home), "API_SERVER_ENABLED": "true", "API_SERVER_KEY": resolve_hermes_key(settings),
+            "API_SERVER_PORT": str(urlparse(settings.hermes_api_url).port or 8642)}
 
 
 def cmd_hermes_gateway(args, settings: Settings) -> int:
@@ -136,9 +113,17 @@ def market_provider(settings: Settings):
     return YFinanceProvider()
 
 
+def hermes_analyst(settings: Settings):
+    if settings.hermes_mode == "gateway":
+        return HermesAnalyst(settings.hermes_api_url, resolve_hermes_key(settings), model=settings.hermes_model,
+                             timeout=settings.analyst_timeout_s)
+    home = ensure_hermes_home(settings.hermes_home, DEFAULT_MODEL)
+    return HermesCliAnalyst(model=settings.hermes_model or DEFAULT_MODEL, env=hermes_env(settings, home),
+                            timeout=settings.analyst_timeout_s, hermes_bin=settings.hermes_bin, workdir=home)
+
+
 def build_deps(settings: Settings, tracer, *, agents: bool, save: bool) -> Deps:
-    hermes = HermesAnalyst(settings.hermes_api_url, resolve_hermes_key(settings), model=settings.hermes_model,
-                           timeout=settings.analyst_timeout_s) if agents else None
+    hermes = hermes_analyst(settings) if agents else None
     analysts = {"hermes": hermes, "dsh": DshAnalyst(make_harness_factory(settings))} if agents else {}
     return Deps(
         market=market_provider(settings), analysts=analysts,

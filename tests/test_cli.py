@@ -24,6 +24,7 @@ def test_seed_refuses_to_overwrite_without_force(tmp_path, monkeypatch, capsys):
 
 
 def test_doctor_reports_names_never_values(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_MODE", "gateway")
     monkeypatch.setenv("XAI_API_KEY", "xai-SECRET")
     monkeypatch.setenv("HERMES_API_KEY", "")
     monkeypatch.setenv("HERMES_ANALYST_HOME", str(tmp_path / "hh"))
@@ -86,3 +87,14 @@ def test_gateway_key_is_generated_once_and_shared(tmp_path, monkeypatch):
 
     monkeypatch.setenv("HERMES_API_KEY", "explicit")
     assert resolve_hermes_key(load_settings(tmp_path / "none.env")) == "explicit"
+
+
+def test_doctor_checks_hermes_executable_in_oneshot_mode(tmp_path, monkeypatch):
+    monkeypatch.setenv("XAI_API_KEY", "")
+    monkeypatch.setenv("STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("DSH_HOME", str(tmp_path / "dsh"))
+    monkeypatch.delenv("HERMES_MODE", raising=False)
+    monkeypatch.setenv("HERMES_BIN", "definitely-not-a-hermes-binary")
+    checks = {c[0]: c for c in doctor_checks(load_settings(tmp_path / "none.env"), httpx.Client())}
+    assert checks["Hermes CLI (oneshot)"][1] is False and "not on PATH" in checks["Hermes CLI (oneshot)"][3]
+    assert "Hermes gateway" not in checks

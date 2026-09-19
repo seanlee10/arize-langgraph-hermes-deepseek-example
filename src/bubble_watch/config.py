@@ -21,6 +21,8 @@ class Settings:
     hermes_api_key: str
     hermes_model: str | None
     hermes_home: Path
+    hermes_mode: str
+    hermes_bin: str
     dsh_bin: str
     dsh_repo: str
     dsh_home: str
@@ -55,6 +57,9 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         # Unset: the Hermes gateway uses its own configured model (set it to grok-4.6 there).
         hermes_model=_env("HERMES_ANALYST_MODEL") or None,
         hermes_home=Path(_env("HERMES_ANALYST_HOME", str(PROJECT_ROOT / ".hermes-analyst"))),
+        # oneshot: a `hermes chat` subprocess per call; gateway: HTTP to `bubble-watch hermes-gateway` (e.g. on EC2)
+        hermes_mode=_env("HERMES_MODE", "oneshot"),
+        hermes_bin=_env("HERMES_BIN", "hermes"),
         dsh_bin=_env("DSH_BIN", str(PROJECT_ROOT / "bin" / "dsh")),
         dsh_repo=_env("DSH_REPO", str(Path.home() / "projects" / "deepseek-harness")),
         dsh_home=_env("DSH_HOME", str(PROJECT_ROOT / ".dsh")),
