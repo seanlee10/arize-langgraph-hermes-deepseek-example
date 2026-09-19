@@ -16,7 +16,6 @@ from .agents.hermes_client import HermesAnalyst
 from .config import DEFAULT_MODEL, Settings, load_settings, missing_required, resolve_hermes_key
 from .graph import Deps, build_graph
 from .market_data.alphavantage import AlphaVantageProvider
-from .market_data.base import FallbackProvider
 from .market_data.yfinance_provider import YFinanceProvider
 from .state_store import load_state, save_state, seed_state
 from .tracing import get_tracer, setup_tracing, shutdown_tracing
@@ -130,11 +129,11 @@ def cmd_hermes_gateway(args, settings: Settings) -> int:
 
 
 def market_provider(settings: Settings):
-    """Alpha Vantage (paid, EOD, any date) first; yfinance only for whole items it lacks."""
-    if not settings.alphavantage_api_key:
-        return YFinanceProvider()
-    return FallbackProvider(AlphaVantageProvider(settings.alphavantage_api_key), YFinanceProvider(),
-                            fallback_name="yfinance")
+    """Alpha Vantage (paid, EOD, any date) is the single source; anything it lacks stays N/A for the
+    Hermes gap fill. yfinance is used only when no Alpha Vantage key is configured."""
+    if settings.alphavantage_api_key:
+        return AlphaVantageProvider(settings.alphavantage_api_key)
+    return YFinanceProvider()
 
 
 def build_deps(settings: Settings, tracer, *, agents: bool, save: bool) -> Deps:

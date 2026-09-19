@@ -5,7 +5,7 @@ import pandas as pd
 import pytest
 
 from bubble_watch.market_data.alphavantage import AlphaVantageProvider
-from bubble_watch.market_data.base import FallbackProvider, GapFill, MarketSnapshot, apply_fills, find_gaps
+from bubble_watch.market_data.base import GapFill, MarketSnapshot, apply_fills, find_gaps
 from bubble_watch.market_data.yfinance_provider import YFinanceProvider
 from bubble_watch.models import Close, PutQuote
 
@@ -106,41 +106,3 @@ def test_alphavantage_quota_or_error_message_raises():
     info = _av(lambda r: httpx.Response(200, json={"Information": "API rate limit reached"}))
     with pytest.raises(AlphaVantageError, match="rate limit"):
         info.snapshot(DAY, ["NVDA"], "NVDA", EXP, [200])
-
-
-class _Fixed:
-    def __init__(self, snap=None, exc=None):
-        self.snap, self.exc, self.calls = snap, exc, 0
-
-    def snapshot(self, day, symbols, ticker, expiry, strikes):
-        self.calls += 1
-        if self.exc:
-            raise self.exc
-        return self.snap
-
-
-def test_fallback_fills_whole_missing_items_and_notes_them():
-    primary = _Fixed(MarketSnapshot(date=DAY, closes={"NVDA": Close(price=222.27, source="av"),
-                                                      "SOXL": Close(price=None, freshness="N/A")},
-                                    puts={200: PutQuote(strike=200, last=1.34, iv=None, freshness="EOD")}))
-    fallback = _Fixed(MarketSnapshot(date=DAY, closes={"NVDA": Close(price=999.0), "SOXL": Close(price=123.67)},
-                                     puts={200: PutQuote(strike=200, last=9.0, iv=40.0),
-                                           210: PutQuote(strike=210, last=2.98, freshness="latest_snapshot")}))
-    snap = FallbackProvider(primary, fallback, fallback_name="yfinance").snapshot(
-        DAY, ["NVDA", "SOXL"], "NVDA", EXP, [200, 210])
-    assert snap.closes["NVDA"].price == 222.27 and snap.closes["SOXL"].price == 123.67
-    assert snap.puts[200].last == 1.34 and snap.puts[200].iv is None  # never mix sources inside one quote
-    assert snap.puts[210].last == 2.98
-    assert sorted(snap.notes) == ["closes.SOXL from yfinance (primary had none)",
-                                  "puts.210 from yfinance (primary had none)"]
-
-
-def test_fallback_takes_over_when_primary_fails_and_skips_when_complete():
-    fallback = _Fixed(MarketSnapshot(date=DAY, closes={"NVDA": Close(price=1.0)}, puts={}))
-    snap = FallbackProvider(_Fixed(exc=RuntimeError("boom")), fallback, fallback_name="yfinance").snapshot(
-        DAY, ["NVDA"], "NVDA", EXP, [])
-    assert snap.closes["NVDA"].price == 1.0 and "primary failed: boom" in snap.notes[0]
-    complete = _Fixed(MarketSnapshot(date=DAY, closes={"NVDA": Close(price=2.0)}, puts={}))
-    fb = _Fixed(MarketSnapshot(date=DAY, closes={}, puts={}))
-    FallbackProvider(complete, fb, fallback_name="yfinance").snapshot(DAY, ["NVDA"], "NVDA", EXP, [])
-    assert fb.calls == 0

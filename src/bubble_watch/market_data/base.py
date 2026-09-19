@@ -69,35 +69,3 @@ def apply_fills(snapshot: MarketSnapshot, fills: list[GapFill]) -> list[str]:
         else:
             rejected.append(f"{fill.field}: unknown field")
     return rejected
-
-
-class FallbackProvider:
-    """Primary source first; a fallback supplies only WHOLE items the primary lacks (a close, a put quote),
-    never individual fields, so one quote never mixes two sources. Every fallback is noted."""
-
-    def __init__(self, primary: MarketDataProvider, fallback: MarketDataProvider, *, fallback_name: str) -> None:
-        self.primary, self.fallback, self.fallback_name = primary, fallback, fallback_name
-
-    def snapshot(self, day: dt.date, symbols: list[str], ticker: str, expiry: dt.date,
-                 strikes: list[int]) -> MarketSnapshot:
-        try:
-            snap = self.primary.snapshot(day, symbols, ticker, expiry, strikes)
-        except Exception as exc:  # noqa: BLE001 - any primary failure degrades to the fallback, noted
-            snap = self.fallback.snapshot(day, symbols, ticker, expiry, strikes)
-            snap.notes.append(f"primary failed: {str(exc)[:200]}; all data from {self.fallback_name}")
-            return snap
-        missing_closes = [s for s in symbols if snap.closes.get(s) is None or snap.closes[s].price is None]
-        missing_puts = [k for k in strikes if k not in snap.puts]
-        if not (missing_closes or missing_puts):
-            return snap
-        backup = self.fallback.snapshot(day, symbols, ticker, expiry, strikes)
-        for s in missing_closes:
-            c = backup.closes.get(s)
-            if c is not None and c.price is not None:
-                snap.closes[s] = c
-                snap.notes.append(f"closes.{s} from {self.fallback_name} (primary had none)")
-        for k in missing_puts:
-            if k in backup.puts:
-                snap.puts[k] = backup.puts[k]
-                snap.notes.append(f"puts.{k} from {self.fallback_name} (primary had none)")
-        return snap

@@ -1,11 +1,10 @@
 """Pure signal computation: every number the report shows comes from here."""
 from __future__ import annotations
 
-from urllib.parse import urlparse
+from .models import Condition, DailyRecord, IVCompare, Signals, WatchState
 
-from .models import Condition, DailyRecord, IVCompare, PutQuote, Signals, WatchState
-
-_QUOTE_FIELDS = ("last", "bid", "ask", "volume", "oi")
+# Alpha Vantage reports IV on a ~0.98%p grid, so a rise of one step (≤ 1.0%p) can't be told from noise.
+IV_STEP = 1.0
 
 
 def pct(new: float | None, old: float | None) -> float | None:
@@ -38,23 +37,6 @@ def _iv_compare(prior: list[DailyRecord], today: DailyRecord, strike: int) -> IV
     return IVCompare(current=current)
 
 
-def _source(q: PutQuote) -> str:
-    return urlparse(q.source_url).netloc or q.source_url or "unknown"
-
-
-def put_comparability(base: PutQuote | None, today: PutQuote | None) -> str | None:
-    """Why a 1-day put change is NOT a market move, or None when it is like-for-like.
-    Catches a data-source switch and a stale feed repeating the previous day's quote."""
-    if base is None or today is None:
-        return None
-    if _source(base) != _source(today):
-        return f"source changed: {_source(base)} → {_source(today)}"
-    fields = [(getattr(base, f), getattr(today, f)) for f in _QUOTE_FIELDS]
-    if all(b is not None for b, _ in fields) and all(b == t for b, t in fields):
-        return "identical to the prior day's quote (stale feed?)"
-    return None
-
-
 def _underperforms(rel_1d: float | None, rel_3d: float | None) -> Condition:
     if rel_1d is None:
         return "unknown"
@@ -63,9 +45,18 @@ def _underperforms(rel_1d: float | None, rel_3d: float | None) -> Condition:
     return "true" if rel_3d is not None and rel_3d < 0 else "partial"
 
 
-def _far_otm_leads(changes: dict[int, float | None], strikes: list[int],
-                   comparability: dict[int, str | None]) -> Condition:
-    if any(changes.get(k) is None or comparability.get(k) for k in strikes):
+def _iv_surface(iv: dict[int, IVCompare], surface: bool | None) -> Condition:
+    """true only if IV rose by more than one grid step at every strike; a uniform rise of at most one
+    step somewhere is ``partial`` (can't tell from noise)."""
+    if surface is None:
+        return "unknown"
+    if not surface:
+        return "false"
+    return "true" if all(c.current - c.prior > IV_STEP for c in iv.values()) else "partial"  # type: ignore[operator]
+
+
+def _far_otm_leads(changes: dict[int, float | None], strikes: list[int]) -> Condition:
+    if any(changes.get(k) is None for k in strikes):
         return "unknown"
     lo, others = min(strikes), [k for k in strikes if k != min(strikes)]
     lead = changes[lo]
@@ -94,8 +85,6 @@ def compute_signals(state: WatchState, today: DailyRecord) -> Signals:
     if base_1d and lo in base_1d.puts and lo in today.puts:
         freshness = (base_1d.puts[lo].freshness, today.puts[lo].freshness)
 
-    comparability = {k: put_comparability(base_1d.puts.get(k) if base_1d else None, today.puts.get(k))
-                     for k in state.strikes}
     changes_1d = put_changes["1d"]
     order = sorted((k for k, v in changes_1d.items() if v is not None), key=lambda k: changes_1d[k], reverse=True)
     iv = {k: _iv_compare(prior, today, k) for k in state.strikes}
@@ -104,10 +93,10 @@ def compute_signals(state: WatchState, today: DailyRecord) -> Signals:
 
     return Signals(
         base_dates=base_dates, returns=returns, rel_spread=rel, put_changes=put_changes,
-        put_freshness_1d=freshness, put_comparability_1d=comparability, convexity_order_1d=order, iv=iv, iv_surface_up=surface,
+        put_freshness_1d=freshness, convexity_order_1d=order, iv=iv, iv_surface_up=surface,
         conditions={
             "nvda_underperforms": _underperforms(rel["1d"], rel["3d"]),
-            "iv_surface_up": "unknown" if surface is None else ("true" if surface else "false"),
-            "far_otm_leads": _far_otm_leads(changes_1d, state.strikes, comparability),
+            "iv_surface_up": _iv_surface(iv, surface),
+            "far_otm_leads": _far_otm_leads(changes_1d, state.strikes),
         },
     )

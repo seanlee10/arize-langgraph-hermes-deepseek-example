@@ -61,9 +61,8 @@ def analyst_brief(state: WatchState, today: DailyRecord, signals: Signals) -> st
 returns / put_changes는 % 변화, rel_spread는 {state.ticker}−{state.peer} %p, base_dates는 각 구간의 비교 기준일,
 iv는 strike별 "최근 검증된 IV"와의 비교, conditions는 재확인 조건 3개
 (nvda_underperforms: {state.ticker} < {state.peer} 지속, iv_surface_up: IV surface 전체 상승,
-far_otm_leads: 가장 OTM put이 다른 put보다 빠르게 상승).
-put_comparability_1d가 null이 아닌 strike의 1일 put 변화는 데이터 출처 변경 또는 stale 데이터 때문이므로
-시장 움직임으로 해석하지 마라.
+far_otm_leads: 가장 OTM put이 다른 put보다 빠르게 상승). partial은 부분 성립 또는 판단 불가다
+(IV는 약 0.98%p 단위라 한 단계 이내 상승은 noise와 구분할 수 없다).
 
 ## 이전 기록
 - 직전 점수: {_fmt(last.score if last else None)} ({last.date if last else '-'}), 판정 {last.verdict.value if last and last.verdict else 'N/A'}
