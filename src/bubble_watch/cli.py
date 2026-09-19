@@ -5,13 +5,15 @@ import argparse
 import datetime as dt
 import os
 import sys
+from pathlib import Path
+from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
 import httpx
 
 from .agents.dsh_client import DshAnalyst, ensure_dsh_home, make_harness_factory
 from .agents.hermes_client import HermesAnalyst
-from .config import Settings, load_settings, missing_required
+from .config import DEFAULT_MODEL, PROJECT_ROOT, Settings, load_settings, missing_required
 from .graph import Deps, build_graph
 from .market_data.alphavantage import AlphaVantageOptions
 from .market_data.yfinance_provider import YFinanceProvider
@@ -72,8 +74,49 @@ def doctor_checks(settings: Settings, client: httpx.Client) -> list[tuple[str, b
                        settings.hermes_api_url if r.status_code == 200 else f"HTTP {r.status_code} (check API_SERVER_KEY)"))
     except httpx.HTTPError:
         checks.append(("Hermes gateway", False, True,
-                       f"not reachable at {settings.hermes_api_url} — start it with API_SERVER_ENABLED=true hermes gateway run"))
+                       f"not reachable at {settings.hermes_api_url} — start it with `uv run bubble-watch hermes-gateway`"))
     return checks
+
+
+_HERMES_CONFIG = """\
+# Written by bubble-watch: isolated Hermes home for the analyst gateway (API server only).
+model:
+  default: {model}
+  provider: xai
+"""
+# Messaging platforms read their credentials from env; never let this gateway bring a bot online.
+_PLATFORM_ENV_PREFIXES = ("TELEGRAM_", "DISCORD_", "SLACK_", "WHATSAPP_", "SIGNAL_", "MATRIX_", "MATTERMOST_",
+                          "BLUEBUBBLES_", "WEIXIN_", "YUANBAO_", "QQBOT_", "TEAMS_", "MSGRAPH_", "EMAIL_", "SMS_")
+
+
+def ensure_hermes_home(home: Path, model: str) -> Path:
+    """Create the isolated HERMES_HOME with a Grok model config; never overwrite an existing one."""
+    home.mkdir(parents=True, exist_ok=True)
+    cfg = home / "config.yaml"
+    if not cfg.exists():
+        cfg.write_text(_HERMES_CONFIG.format(model=model))
+    return home
+
+
+def hermes_gateway_env(settings: Settings, home: Path) -> dict[str, str]:
+    env = {k: v for k, v in os.environ.items() if not k.startswith(_PLATFORM_ENV_PREFIXES)}
+    env.update(HERMES_HOME=str(home), API_SERVER_ENABLED="true", API_SERVER_KEY=settings.hermes_api_key,
+               API_SERVER_PORT=str(urlparse(settings.hermes_api_url).port or 8642),
+               XAI_API_KEY=settings.xai_api_key)
+    if settings.exa_api_key:
+        env["EXA_API_KEY"] = settings.exa_api_key  # Hermes web_search auto-selects Exa
+    return env
+
+
+def cmd_hermes_gateway(args, settings: Settings) -> int:
+    missing = missing_required(settings)
+    if missing:
+        print(f"missing required settings: {', '.join(missing)} (set them in .env)")
+        return 1
+    home = ensure_hermes_home(PROJECT_ROOT / ".hermes-analyst", DEFAULT_MODEL)
+    print(f"starting Hermes analyst gateway (HERMES_HOME={home}, API server only) at {settings.hermes_api_url}")
+    os.execvpe("hermes", ["hermes", "gateway", "run"], hermes_gateway_env(settings, home))
+    return 0  # unreachable: execvpe replaces the process
 
 
 def build_deps(settings: Settings, tracer, *, agents: bool, save: bool) -> Deps:
@@ -149,9 +192,11 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--date", type=dt.date.fromisoformat, help="YYYY-MM-DD (default: last closed session)")
     run.add_argument("--dry-run", action="store_true", help="write the report but do not save state")
     run.add_argument("--no-agents", action="store_true", help="data + signals only; no LLM calls")
+    sub.add_parser("hermes-gateway", help="run the Hermes analyst gateway (isolated home, API server only)")
     args = parser.parse_args(argv)
     settings = load_settings()
-    return {"seed": cmd_seed, "doctor": cmd_doctor, "run": cmd_run}[args.cmd](args, settings)
+    commands = {"seed": cmd_seed, "doctor": cmd_doctor, "run": cmd_run, "hermes-gateway": cmd_hermes_gateway}
+    return commands[args.cmd](args, settings)
 
 
 if __name__ == "__main__":
