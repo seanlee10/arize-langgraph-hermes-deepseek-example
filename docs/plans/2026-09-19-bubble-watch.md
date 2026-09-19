@@ -1262,7 +1262,7 @@ def ask_for_view(agent: str, ask: Asker, prompt: str) -> AnalystResult:
 ```
 
 **`src/bubble_watch/agents/prompts.py`**
-```python
+````python
 """Prompt builders. Numbers arrive pre-computed; agents interpret and research, never recompute."""
 from __future__ import annotations
 
@@ -1386,7 +1386,7 @@ def gap_fill_brief(day: dt.date, ticker: str, expiry: dt.date, gaps: list) -> st
 def retry_prompt(error: str) -> str:
     return (f"직전 응답을 파싱/검증하지 못했다: {error[:800]}\n"
             "스키마를 정확히 지키는 JSON 객체 하나만 ```json 블록으로 다시 출력하라. 다른 텍스트는 쓰지 마라.")
-```
+````
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -2022,7 +2022,7 @@ Expected: FAIL with `ModuleNotFoundError: No module named 'bubble_watch.report'`
 - [ ] **Step 3: Write the implementation**
 
 **`src/bubble_watch/writer.py`**
-```python
+````python
 """Narrative writer: one direct xAI chat call that turns reconciled views into Korean prose (no numbers of its own)."""
 from __future__ import annotations
 
@@ -2122,7 +2122,7 @@ class XaiWriter:
             except (ValueError, KeyError, IndexError) as exc:
                 error = str(exc)
         raise WriterError(f"writer returned invalid narrative JSON twice: {error[:300]}")
-```
+````
 
 **`src/bubble_watch/report.py`**
 ```python
