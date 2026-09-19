@@ -73,7 +73,7 @@ def test_settings_defaults_and_missing_names(tmp_path, monkeypatch):
     s = load_settings(env)
     assert s.dsh_model == "grok-4.6" and s.writer_model == "grok-4.6"
     assert s.hermes_model is None
-    assert missing_required(s) == ["HERMES_API_KEY"]
+    assert missing_required(s) == []
 
 
 def test_inline_comment_after_empty_value_is_not_a_value(tmp_path, monkeypatch):

@@ -13,7 +13,7 @@ import httpx
 
 from .agents.dsh_client import DshAnalyst, ensure_dsh_home, make_harness_factory
 from .agents.hermes_client import HermesAnalyst
-from .config import DEFAULT_MODEL, PROJECT_ROOT, Settings, load_settings, missing_required
+from .config import DEFAULT_MODEL, Settings, load_settings, missing_required, resolve_hermes_key
 from .graph import Deps, build_graph
 from .market_data.alphavantage import AlphaVantageOptions
 from .market_data.yfinance_provider import YFinanceProvider
@@ -41,8 +41,8 @@ def _state_path(settings: Settings):
 def doctor_checks(settings: Settings, client: httpx.Client) -> list[tuple[str, bool, bool, str]]:
     checks: list[tuple[str, bool, bool, str]] = []
     missing = set(missing_required(settings))
-    for name in ("XAI_API_KEY", "HERMES_API_KEY"):
-        checks.append((f"env {name}", name not in missing, True, "set" if name not in missing else "missing in .env"))
+    checks.append(("env XAI_API_KEY", "XAI_API_KEY" not in missing, True,
+                   "set" if "XAI_API_KEY" not in missing else "missing in .env"))
     for name, value, why in (("ARIZE_SPACE_ID", settings.arize_space_id, "tracing"),
                              ("ARIZE_API_KEY", settings.arize_api_key, "tracing"),
                              ("EXA_API_KEY", settings.exa_api_key, "dsh web_search"),
@@ -67,14 +67,11 @@ def doctor_checks(settings: Settings, client: httpx.Client) -> list[tuple[str, b
                 checks.append((f"xAI model {model}", model in ids, True, detail))
         except httpx.HTTPError as exc:
             checks.append(("xAI API", False, True, f"unreachable: {type(exc).__name__}"))
-    if not settings.hermes_api_key:
-        checks.append(("Hermes gateway", False, True, "skipped: HERMES_API_KEY is not set"))
-        return checks
     try:
         r = client.get(settings.hermes_api_url.rstrip("/") + "/models",
-                       headers={"Authorization": f"Bearer {settings.hermes_api_key}"})
+                       headers={"Authorization": f"Bearer {resolve_hermes_key(settings)}"})
         checks.append(("Hermes gateway", r.status_code == 200, True,
-                       settings.hermes_api_url if r.status_code == 200 else f"HTTP {r.status_code} (check API_SERVER_KEY)"))
+                       settings.hermes_api_url if r.status_code == 200 else f"HTTP {r.status_code} (gateway started with a different key? restart it)"))
     except httpx.HTTPError:
         checks.append(("Hermes gateway", False, True,
                        f"not reachable at {settings.hermes_api_url} — start it with `uv run bubble-watch hermes-gateway`"))
@@ -109,7 +106,7 @@ def ensure_hermes_home(home: Path, model: str) -> Path:
 
 def hermes_gateway_env(settings: Settings, home: Path) -> dict[str, str]:
     env = {k: v for k, v in os.environ.items() if not k.startswith(_PLATFORM_ENV_PREFIXES)}
-    env.update(HERMES_HOME=str(home), API_SERVER_ENABLED="true", API_SERVER_KEY=settings.hermes_api_key,
+    env.update(HERMES_HOME=str(home), API_SERVER_ENABLED="true", API_SERVER_KEY=resolve_hermes_key(settings),
                API_SERVER_PORT=str(urlparse(settings.hermes_api_url).port or 8642),
                XAI_API_KEY=settings.xai_api_key, TIRITH_ENABLED="false")
     if settings.exa_api_key:
@@ -122,14 +119,14 @@ def cmd_hermes_gateway(args, settings: Settings) -> int:
     if missing:
         print(f"missing required settings: {', '.join(missing)} (set them in .env)")
         return 1
-    home = ensure_hermes_home(PROJECT_ROOT / ".hermes-analyst", DEFAULT_MODEL)
+    home = ensure_hermes_home(settings.hermes_home, DEFAULT_MODEL)
     print(f"starting Hermes analyst gateway (HERMES_HOME={home}, API server only) at {settings.hermes_api_url}")
     os.execvpe("hermes", ["hermes", "gateway", "run"], hermes_gateway_env(settings, home))
     return 0  # unreachable: execvpe replaces the process
 
 
 def build_deps(settings: Settings, tracer, *, agents: bool, save: bool) -> Deps:
-    hermes = HermesAnalyst(settings.hermes_api_url, settings.hermes_api_key, model=settings.hermes_model,
+    hermes = HermesAnalyst(settings.hermes_api_url, resolve_hermes_key(settings), model=settings.hermes_model,
                            timeout=settings.analyst_timeout_s) if agents else None
     analysts = {"hermes": hermes, "dsh": DshAnalyst(make_harness_factory(settings))} if agents else {}
     return Deps(

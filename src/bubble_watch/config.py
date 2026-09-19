@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import secrets
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -9,7 +10,7 @@ from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MODEL = "grok-4.6"
-REQUIRED = ("XAI_API_KEY", "HERMES_API_KEY")
+REQUIRED = ("XAI_API_KEY",)
 
 
 @dataclass(frozen=True)
@@ -19,6 +20,7 @@ class Settings:
     hermes_api_url: str
     hermes_api_key: str
     hermes_model: str | None
+    hermes_home: Path
     dsh_bin: str
     dsh_repo: str
     dsh_home: str
@@ -51,6 +53,7 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         hermes_api_key=_env("HERMES_API_KEY"),
         # Unset: the Hermes gateway uses its own configured model (set it to grok-4.6 there).
         hermes_model=_env("HERMES_ANALYST_MODEL") or None,
+        hermes_home=Path(_env("HERMES_ANALYST_HOME", str(PROJECT_ROOT / ".hermes-analyst"))),
         dsh_bin=_env("DSH_BIN", str(PROJECT_ROOT / "bin" / "dsh")),
         dsh_repo=_env("DSH_REPO", str(Path.home() / "projects" / "deepseek-harness")),
         dsh_home=_env("DSH_HOME", str(PROJECT_ROOT / ".dsh")),
@@ -70,5 +73,20 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
 
 
 def missing_required(settings: Settings) -> list[str]:
-    values = {"XAI_API_KEY": settings.xai_api_key, "HERMES_API_KEY": settings.hermes_api_key}
-    return [name for name in REQUIRED if not values[name]]
+    return [name for name in REQUIRED if not {"XAI_API_KEY": settings.xai_api_key}[name]]
+
+
+def resolve_hermes_key(settings: Settings) -> str:
+    """The analyst gateway's API_SERVER_KEY: HERMES_API_KEY if set, else a random key generated once
+    into <hermes_home>/api_server.key (0600). Shared by `hermes-gateway` and the Hermes client."""
+    if settings.hermes_api_key:
+        return settings.hermes_api_key
+    path = settings.hermes_home / "api_server.key"
+    if path.exists():
+        return path.read_text().strip()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    key = secrets.token_urlsafe(32)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(key + "\n")
+    return key

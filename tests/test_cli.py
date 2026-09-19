@@ -26,6 +26,7 @@ def test_seed_refuses_to_overwrite_without_force(tmp_path, monkeypatch, capsys):
 def test_doctor_reports_names_never_values(tmp_path, monkeypatch):
     monkeypatch.setenv("XAI_API_KEY", "xai-SECRET")
     monkeypatch.setenv("HERMES_API_KEY", "")
+    monkeypatch.setenv("HERMES_ANALYST_HOME", str(tmp_path / "hh"))
     monkeypatch.setenv("STATE_DIR", str(tmp_path))
     monkeypatch.setenv("DSH_HOME", str(tmp_path / "dsh"))
     settings = load_settings(tmp_path / "none.env")
@@ -37,9 +38,9 @@ def test_doctor_reports_names_never_values(tmp_path, monkeypatch):
 
     checks = doctor_checks(settings, httpx.Client(transport=httpx.MockTransport(handler)))
     by_name = {c[0]: c for c in checks}
-    assert by_name["env HERMES_API_KEY"][1] is False
+    assert "env HERMES_API_KEY" not in by_name  # generated automatically now
     assert by_name["xAI model grok-4.6"][1] is True
-    assert by_name["Hermes gateway"][1] is False and "skipped" in by_name["Hermes gateway"][3]
+    assert by_name["Hermes gateway"][1] is False and "not reachable" in by_name["Hermes gateway"][3]
     assert (tmp_path / "dsh" / "settings.yaml").exists()
     assert not any("xai-SECRET" in c[3] for c in checks)
 
@@ -65,3 +66,23 @@ def test_hermes_gateway_env_is_api_only_and_isolated(tmp_path, monkeypatch):
     assert env["XAI_API_KEY"] == "xai-k" and env["EXA_API_KEY"] == "exa-k"
     assert "TELEGRAM_BOT_TOKEN" not in env
     assert env["TIRITH_ENABLED"] == "false"
+
+
+def test_gateway_key_is_generated_once_and_shared(tmp_path, monkeypatch):
+    import stat
+
+    from bubble_watch.config import missing_required, resolve_hermes_key
+
+    monkeypatch.setenv("XAI_API_KEY", "xai-k")
+    monkeypatch.delenv("HERMES_API_KEY", raising=False)
+    monkeypatch.setenv("HERMES_ANALYST_HOME", str(tmp_path / "hh"))
+    settings = load_settings(tmp_path / "none.env")
+    assert missing_required(settings) == []  # no longer something the user must set
+    key = resolve_hermes_key(settings)
+    key_file = tmp_path / "hh" / "api_server.key"
+    assert len(key) >= 32 and key_file.read_text().strip() == key
+    assert stat.S_IMODE(key_file.stat().st_mode) == 0o600
+    assert resolve_hermes_key(settings) == key  # stable across runs
+
+    monkeypatch.setenv("HERMES_API_KEY", "explicit")
+    assert resolve_hermes_key(load_settings(tmp_path / "none.env")) == "explicit"
