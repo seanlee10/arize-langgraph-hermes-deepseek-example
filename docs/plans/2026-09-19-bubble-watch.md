@@ -21,12 +21,12 @@
 - Agreement: |Δscore| ≤ 0.5 and same verdict. Scores 0–10, one decimal, ROUND_HALF_UP.
 - dsh runs under Node ≥ 22.19 (wrapper `bin/dsh` pins `~/.nvm/versions/node/v24.21.0`).
 - Tracing is optional: no Arize credentials → no-op.
-- Run tests with `uv run pytest -q` from `bubble-watch/`.
+- Run tests with `uv run pytest -q` from the repo root (`~/projects/axium`).
 
 ## File map
 
 ```
-bubble-watch/
+axium/  (repo root)
   pyproject.toml                 (modify: scripts, pytest config)
   .env.example  README.md
   bin/dsh                        (exists: Node 24 launcher)
