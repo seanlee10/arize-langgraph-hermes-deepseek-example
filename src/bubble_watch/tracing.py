@@ -49,6 +49,9 @@ def _parent_context() -> Any:
     if trace.get_current_span().get_span_context().is_valid:
         return None  # already inside a traced context: use it
     try:
+        # get_current_span() reads langchain_core.runnables.config without importing it; load it first
+        # so a span opened before anything else imported LangChain doesn't raise AttributeError.
+        import langchain_core.runnables.config  # noqa: F401
         from openinference.instrumentation.langchain import get_current_span
         node_span = get_current_span()
     except ImportError:  # LangChain instrumentor not installed
