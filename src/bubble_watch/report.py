@@ -1,25 +1,9 @@
 """Markdown report: every table cell comes from code; the writer's Narrative supplies the prose."""
 from __future__ import annotations
 
-from .facts import CONDITION_LABEL, condition_text, md, money, pp, spct, windows
-from .models import AnalystView, DailyRecord, PutQuote, Reconciliation, Verdict, WatchState, round1
+from .facts import CONDITION_LABEL, MODE_LABEL, VERDICT_LABEL, condition_text, md, money, pp, spct, windows
+from .models import AnalystView, DailyRecord, PutQuote, Reconciliation, WatchState, round1
 from .writer import Narrative
-
-VERDICT_LABEL = {
-    Verdict.NOT_TRIGGERED: "NOT TRIGGERED",
-    Verdict.TRIGGERED: "TRIGGERED",
-    Verdict.TRIGGERED_DE_CONFIRMING: "TRIGGERED, BUT DE-CONFIRMING",
-    Verdict.TRIGGERED_FURTHER_DE_CONFIRMING: "TRIGGERED, BUT FURTHER DE-CONFIRMING",
-    Verdict.CONFIRMED: "CONFIRMED",
-}
-_MODE_LABEL = {"agree": "두 analyst 합의", "agree_after_rebuttal": "반박 라운드 후 합의",
-               "disagree": "반박 라운드 후에도 불일치 → 평균 점수, 더 보수적인 판정", "single": "단일 analyst 기준"}
-
-
-
-
-
-
 
 
 def _iv(v: float | None) -> str:
@@ -111,7 +95,7 @@ def render_report(state: WatchState, record: DailyRecord, recon: Reconciliation,
     out += [f"| {CONDITION_LABEL[k].format(t=t, p=p, lo=lo)} | {condition_text(k, v)} |"
             for k, v in sig.conditions.items()]
 
-    out += ["", "### Analyst views", "", f"{_MODE_LABEL[recon.mode]}.", "",
+    out += ["", "### Analyst views", "", f"{MODE_LABEL[recon.mode]}.", "",
             "| Analyst | Score | Verdict | Confidence |", "|---|---:|---|---|"]
     out += [f"| {name} | {v.score:.1f} | {v.verdict.value} | {v.confidence} |" for name, v in views.items()]
     if recon.mode == "disagree":

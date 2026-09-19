@@ -5,7 +5,7 @@ import httpx
 from pydantic import BaseModel
 
 from .agents.base import extract_json
-from .facts import korean_facts, leaked_identifiers
+from .facts import MODE_LABEL, VERDICT_LABEL, korean_facts, leaked_identifiers
 from .models import AnalystView, DailyRecord, Reconciliation, WatchState
 
 SYSTEM_WRITER = (
@@ -37,14 +37,14 @@ def writer_brief(state: WatchState, record: DailyRecord, recon: Reconciliation,
         f"[{i}] {c.headline} ({c.direction}, {c.weight}, cited by {', '.join(c.cited_by)}) — {c.rationale_ko}"
         for i, c in enumerate(recon.catalysts, 1)) or "(없음)"
     opinions = "\n\n".join(
-        f"### {name}: score {v.score}, {v.verdict.value}, confidence {v.confidence}\n"
+        f"### {name}: 점수 {v.score}, 판정 {VERDICT_LABEL[v.verdict]}, 확신도 {v.confidence}\n"
         f"- tape: {v.tape_read_ko}\n- 점수 변화 이유: {v.score_delta_reasoning_ko}\n- watch: {v.watch_conditions_ko}"
         + (f"\n- rebuttal: {v.rebuttal_ko}" if v.rebuttal_ko else "")
         for name, v in views.items())
     return f"""# {state.ticker} {record.date} 노트 서술 작성
 
 ## 최종 결론 (확정)
-- score {recon.score}, verdict {recon.verdict.value}, reconciliation mode {recon.mode}
+- 점수 {recon.score}, 판정 `{VERDICT_LABEL[recon.verdict]}`, {MODE_LABEL[recon.mode]}
 - flags: {'; '.join(recon.flags) or '없음'}
 
 ## 오늘의 확정 수치 (숫자는 여기서만 인용)

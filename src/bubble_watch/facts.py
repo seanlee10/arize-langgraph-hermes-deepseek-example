@@ -5,7 +5,17 @@ from __future__ import annotations
 import re
 from decimal import ROUND_HALF_UP, Decimal
 
-from .models import DailyRecord, WatchState
+from .models import DailyRecord, Verdict, WatchState
+
+VERDICT_LABEL = {
+    Verdict.NOT_TRIGGERED: "NOT TRIGGERED",
+    Verdict.TRIGGERED: "TRIGGERED",
+    Verdict.TRIGGERED_DE_CONFIRMING: "TRIGGERED, BUT DE-CONFIRMING",
+    Verdict.TRIGGERED_FURTHER_DE_CONFIRMING: "TRIGGERED, BUT FURTHER DE-CONFIRMING",
+    Verdict.CONFIRMED: "CONFIRMED",
+}
+MODE_LABEL = {"agree": "두 analyst 합의", "agree_after_rebuttal": "반박 라운드 후 합의",
+               "disagree": "반박 라운드 후에도 불일치 → 평균 점수, 더 보수적인 판정", "single": "단일 analyst 기준"}
 
 CONDITION_LABEL = {
     "nvda_underperforms": "{t} < {p} (여러 날 지속)",
@@ -19,7 +29,7 @@ PARTIAL_LABEL = {"nvda_underperforms": "부분 성립 (1일만)", "iv_surface_up
 # Signal/record field names that must never reach the Korean prose.
 _CODE_NAMES = ("rel_spread", "far_otm_leads", "iv_surface_up", "nvda_underperforms", "convexity_order",
                "put_changes", "put_freshness", "base_dates", "score_delta", "reconciliation", "watch_conditions")
-_IDENTIFIER = re.compile(r"\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b")          # snake_case tokens
+_IDENTIFIER = re.compile(r"\b(?:[a-z][a-z0-9]*(?:_[a-z0-9]+)+|[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)\b")  # snake / ENUM_CASE
 _ASSIGNMENT = re.compile(r"\b[a-z_]+\s*=\s*(?:true|false|\[)")            # iv_surface_up=true, x=[...]
 
 

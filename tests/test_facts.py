@@ -31,6 +31,8 @@ def test_leaked_identifiers_finds_code_names_and_assignments():
     text = "rel_spread 1d -0.87, far_otm_leads=false, convexity_order_1d [220, 210, 200], iv_surface_up=true. 정상 문장."
     assert leaked_identifiers(text) == ["convexity_order_1d", "far_otm_leads", "iv_surface_up", "rel_spread"]
     assert leaked_identifiers("NVDA가 SMH를 -0.87%p underperform했고 de-confirmation이 이어졌다.") == []
+    assert leaked_identifiers("판정 TRIGGERED_FURTHER_DE_CONFIRMING 유지") == ["TRIGGERED_FURTHER_DE_CONFIRMING"]
+    assert leaked_identifiers("판정 `TRIGGERED, BUT FURTHER DE-CONFIRMING` 유지, NVDA·SMH·SOXL") == []
 
 
 def test_writer_retries_once_when_code_names_leak():

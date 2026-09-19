@@ -68,6 +68,7 @@ def test_writer_brief_numbers_catalysts_and_fallback():
     brief = writer_brief(s, rec, recon, views)
     assert "[1] Huawei AI chips" in brief and "headline_ko" in brief
     assert "NVDA − SMH 상대 성과" in brief  # Korean fact sheet, not raw signal JSON
+    assert "TRIGGERED, BUT FURTHER DE-CONFIRMING" in brief and "TRIGGERED_FURTHER" not in brief
     assert "rel_spread" not in brief and "far_otm_leads" not in brief and '"base_dates"' not in brief
     fb = fallback_narrative(recon, views)
     assert fb.tape_ko == "tape 8.2"
