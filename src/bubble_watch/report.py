@@ -97,12 +97,12 @@ def render_report(state: WatchState, record: DailyRecord, recon: Reconciliation,
 
     out += ["", "### Analyst views", "", f"{MODE_LABEL[recon.mode]}.", "",
             "| Analyst | Score | Verdict | Confidence |", "|---|---:|---|---|"]
-    out += [f"| {name} | {v.score:.1f} | {v.verdict.value} | {v.confidence} |" for name, v in views.items()]
+    out += [f"| {name} | {v.score:.1f} | {VERDICT_LABEL[v.verdict]} | {v.confidence} |" for name, v in views.items()]
     if recon.mode == "disagree":
         out += ["", "#### Analyst disagreement", ""]
         for name, v in views.items():
             rebuttal = f" — 반박: {v.rebuttal_ko}" if v.rebuttal_ko else ""
-            out += [f"**{name}** ({v.score:.1f}, {v.verdict.value}): {v.tape_read_ko}{rebuttal}", ""]
+            out += [f"**{name}** ({v.score:.1f}, {VERDICT_LABEL[v.verdict]}): {v.tape_read_ko}{rebuttal}", ""]
     if recon.flags or notes:
         out += ["", "#### 데이터·실행 노트", ""] + [f"- {n}" for n in [*recon.flags, *notes]]
     if recon.catalysts:

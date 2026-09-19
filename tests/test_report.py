@@ -50,6 +50,8 @@ def test_report_tables_come_from_code():
     assert "`TRIGGERED, BUT FURTHER DE-CONFIRMING`" in md
     assert "[1]: https://reuters.com/huawei" in md and "gap note" in md
     assert "Analyst disagreement" not in md and "단일 analyst" not in md
+    assert "| hermes | 8.2 | TRIGGERED, BUT FURTHER DE-CONFIRMING | med |" in md
+    assert "TRIGGERED_FURTHER" not in md  # no enum names anywhere in the report
 
 
 def test_disagreement_and_single_sections():
