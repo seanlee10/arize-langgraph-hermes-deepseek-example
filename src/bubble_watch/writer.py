@@ -45,7 +45,7 @@ def writer_brief(state: WatchState, record: DailyRecord, recon: Reconciliation,
 
 ## 최종 결론 (확정)
 - 점수 {recon.score}, 판정 `{VERDICT_LABEL[recon.verdict]}`, {MODE_LABEL[recon.mode]}
-- flags: {'; '.join(recon.flags) or '없음'}
+- 주의 사항: {'; '.join(recon.flags) or '없음'}
 
 ## 오늘의 확정 수치 (숫자는 여기서만 인용)
 {korean_facts(state, record) if record.signals else '(없음)'}
