@@ -1,0 +1,6 @@
+#!/bin/sh
+# dsh launcher for the bubble-watch dsh analyst: the harness needs Node ^22.19 || >=24.
+# DSH_NODE and DSH_REPO override the defaults below.
+NODE="${DSH_NODE:-$HOME/.nvm/versions/node/v24.21.0/bin/node}"
+REPO="${DSH_REPO:-$HOME/projects/deepseek-harness}"
+cd "$REPO" && exec "$NODE" --import tsx/esm apps/cli/src/bin.ts "$@"

@@ -1,0 +1,40 @@
+[project]
+name = "bubble-watch"
+version = "0.1.0"
+description = "LangGraph NVDA bubble-signal watch with Hermes and DeepSeek Harness analysts"
+authors = [
+    { name = "Sean Lee", email = "yihsean@gmail.com" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "arize-otel>=0.13.0",
+    "deepseek-harness-sdk",
+    "httpx>=0.28.1",
+    "langgraph>=1.2.11",
+    "openinference-instrumentation-langchain>=0.1.76",
+    "pydantic>=2.13.5",
+    "python-dotenv>=1.2.3",
+    "yfinance>=1.7.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.12.9,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.16.8",
+]
+
+[tool.uv.sources]
+deepseek-harness-sdk = { path = "/Users/sean/projects/deepseek-harness/python/sdk", editable = true }
+
+[project.scripts]
+bubble-watch = "bubble_watch.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
