@@ -4,7 +4,7 @@ from __future__ import annotations
 import datetime as dt
 from typing import Protocol
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ..models import PUT_FIELDS, Close, Freshness, PutQuote
 
@@ -15,6 +15,7 @@ class MarketSnapshot(BaseModel):
     date: dt.date
     closes: dict[str, Close]
     puts: dict[int, PutQuote]
+    notes: list[str] = Field(default_factory=list)  # e.g. which items came from a fallback source
 
 
 class MarketDataProvider(Protocol):
@@ -70,15 +71,33 @@ def apply_fills(snapshot: MarketSnapshot, fills: list[GapFill]) -> list[str]:
     return rejected
 
 
-def merge_puts(primary: dict[int, PutQuote], secondary: dict[int, PutQuote]) -> dict[int, PutQuote]:
-    """Fill fields missing from ``primary`` with ``secondary`` values (e.g. historical IV)."""
-    merged = {k: q.model_copy() for k, q in primary.items()}
-    for k, sq in secondary.items():
-        if k not in merged:
-            merged[k] = sq.model_copy()
-            continue
-        q = merged[k]
-        for f in PUT_FIELDS:
-            if getattr(q, f) is None and getattr(sq, f) is not None:
-                setattr(q, f, getattr(sq, f))
-    return merged
+class FallbackProvider:
+    """Primary source first; a fallback supplies only WHOLE items the primary lacks (a close, a put quote),
+    never individual fields, so one quote never mixes two sources. Every fallback is noted."""
+
+    def __init__(self, primary: MarketDataProvider, fallback: MarketDataProvider, *, fallback_name: str) -> None:
+        self.primary, self.fallback, self.fallback_name = primary, fallback, fallback_name
+
+    def snapshot(self, day: dt.date, symbols: list[str], ticker: str, expiry: dt.date,
+                 strikes: list[int]) -> MarketSnapshot:
+        try:
+            snap = self.primary.snapshot(day, symbols, ticker, expiry, strikes)
+        except Exception as exc:  # noqa: BLE001 - any primary failure degrades to the fallback, noted
+            snap = self.fallback.snapshot(day, symbols, ticker, expiry, strikes)
+            snap.notes.append(f"primary failed: {str(exc)[:200]}; all data from {self.fallback_name}")
+            return snap
+        missing_closes = [s for s in symbols if snap.closes.get(s) is None or snap.closes[s].price is None]
+        missing_puts = [k for k in strikes if k not in snap.puts]
+        if not (missing_closes or missing_puts):
+            return snap
+        backup = self.fallback.snapshot(day, symbols, ticker, expiry, strikes)
+        for s in missing_closes:
+            c = backup.closes.get(s)
+            if c is not None and c.price is not None:
+                snap.closes[s] = c
+                snap.notes.append(f"closes.{s} from {self.fallback_name} (primary had none)")
+        for k in missing_puts:
+            if k in backup.puts:
+                snap.puts[k] = backup.puts[k]
+                snap.notes.append(f"puts.{k} from {self.fallback_name} (primary had none)")
+        return snap

@@ -13,7 +13,7 @@ from langgraph.graph import END, START, StateGraph
 
 from .agents.base import Analyst, AnalystError, AnalystResult
 from .agents.prompts import analyst_brief, gap_fill_brief, rebuttal_brief
-from .market_data.base import GapFill, MarketDataProvider, MarketSnapshot, apply_fills, find_gaps, merge_puts
+from .market_data.base import GapFill, MarketDataProvider, MarketSnapshot, apply_fills, find_gaps
 from .models import DailyRecord, Reconciliation, WatchState, round1
 from .reconcile import reconcile
 from .report import render_report
@@ -56,7 +56,6 @@ class Deps:
     reports_dir: Path
     state_path: Path
     gap_filler: GapFiller | None = None
-    options_backup: Any = None  # AlphaVantageOptions
     save: bool = True
 
 
@@ -76,11 +75,7 @@ def build_graph(deps: Deps):
         except Exception as exc:
             snap = MarketSnapshot(date=day, closes={}, puts={})
             notes.append(f"market data provider failed: {exc}")
-        if deps.options_backup is not None:
-            try:
-                snap.puts = merge_puts(snap.puts, deps.options_backup.puts(day, w.ticker, w.expiry, w.strikes))
-            except Exception as exc:
-                notes.append(f"historical options backup failed: {exc}")
+        notes += snap.notes
         return {"record": DailyRecord(date=day, closes=snap.closes, puts=snap.puts), "notes": notes}
 
     def fill_gaps(state: RunState) -> dict:

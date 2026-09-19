@@ -15,7 +15,8 @@ from .agents.dsh_client import DshAnalyst, ensure_dsh_home, make_harness_factory
 from .agents.hermes_client import HermesAnalyst
 from .config import DEFAULT_MODEL, Settings, load_settings, missing_required, resolve_hermes_key
 from .graph import Deps, build_graph
-from .market_data.alphavantage import AlphaVantageOptions
+from .market_data.alphavantage import AlphaVantageProvider
+from .market_data.base import FallbackProvider
 from .market_data.yfinance_provider import YFinanceProvider
 from .state_store import load_state, save_state, seed_state
 from .tracing import get_tracer, setup_tracing, shutdown_tracing
@@ -47,8 +48,8 @@ def doctor_checks(settings: Settings, client: httpx.Client) -> list[tuple[str, b
                              ("ARIZE_API_KEY", settings.arize_api_key, "tracing"),
                              ("TAVILY_API_KEY", settings.tavily_api_key, "web search for both analysts"),
                              ("EXA_API_KEY", settings.exa_api_key, "web search fallback"),
-                             ("ALPHAVANTAGE_API_KEY", settings.alphavantage_api_key, "historical option snapshots")):
-        checks.append((f"env {name}", bool(value), False, f"set ({why})" if value else f"not set — {why} disabled"))
+                             ("ALPHAVANTAGE_API_KEY", settings.alphavantage_api_key, "primary market data (EOD closes + options)")):
+        checks.append((f"env {name}", bool(value), False, f"set ({why})" if value else f"not set — {why} unavailable"))
     state = _state_path(settings)
     checks.append(("state file", state.exists(), True, str(state) if state.exists() else "run `bubble-watch seed`"))
     dsh_ok = os.access(settings.dsh_bin, os.X_OK)
@@ -128,15 +129,22 @@ def cmd_hermes_gateway(args, settings: Settings) -> int:
     return 0  # unreachable: execvpe replaces the process
 
 
+def market_provider(settings: Settings):
+    """Alpha Vantage (paid, EOD, any date) first; yfinance only for whole items it lacks."""
+    if not settings.alphavantage_api_key:
+        return YFinanceProvider()
+    return FallbackProvider(AlphaVantageProvider(settings.alphavantage_api_key), YFinanceProvider(),
+                            fallback_name="yfinance")
+
+
 def build_deps(settings: Settings, tracer, *, agents: bool, save: bool) -> Deps:
     hermes = HermesAnalyst(settings.hermes_api_url, resolve_hermes_key(settings), model=settings.hermes_model,
                            timeout=settings.analyst_timeout_s) if agents else None
     analysts = {"hermes": hermes, "dsh": DshAnalyst(make_harness_factory(settings))} if agents else {}
     return Deps(
-        market=YFinanceProvider(), analysts=analysts,
+        market=market_provider(settings), analysts=analysts,
         writer=XaiWriter(settings.xai_api_key, settings.writer_model, settings.xai_base_url) if agents else None,
         tracer=tracer, reports_dir=settings.reports_dir, state_path=_state_path(settings), gap_filler=hermes,
-        options_backup=AlphaVantageOptions(settings.alphavantage_api_key) if settings.alphavantage_api_key else None,
         save=save)
 
 
