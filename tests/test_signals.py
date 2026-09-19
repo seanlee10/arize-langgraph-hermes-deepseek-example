@@ -51,3 +51,37 @@ def test_far_otm_leads_true_when_200p_rises_fastest():
     today.puts[200].last, today.puts[210].last, today.puts[220].last = 4.00, 6.50, 11.50
     sig = compute_signals(s, today)
     assert sig.conditions["far_otm_leads"] == "true"
+
+
+def _next_day(s, changes=None):
+    today = s.records[-1].model_copy(deep=True)
+    today.date = today.date.replace(day=18)
+    for k, q in today.puts.items():
+        for field, value in (changes or {}).get(k, {}).items():
+            setattr(q, field, value)
+    return today
+
+
+def test_like_for_like_puts_are_comparable():
+    s = seed_state()
+    today = _next_day(s, {k: {"last": v} for k, v in ((200, 1.34), (210, 2.98), (220, 6.30))})
+    sig = compute_signals(s, today)
+    assert sig.put_comparability_1d == {200: None, 210: None, 220: None}
+
+
+def test_source_change_is_flagged_and_neutralizes_convexity():
+    s = seed_state()
+    yahoo = "https://finance.yahoo.com/quote/NVDA261016P00200000"
+    today = _next_day(s, {200: {"last": 4.00, "source_url": yahoo}, 210: {"last": 6.50}, 220: {"last": 11.50}})
+    sig = compute_signals(s, today)
+    assert sig.put_comparability_1d[200] == "source changed: www.alphavantage.co → finance.yahoo.com"
+    assert sig.put_comparability_1d[210] is None
+    assert sig.put_changes["1d"][200] == 138.1  # value kept, but flagged
+    assert sig.conditions["far_otm_leads"] == "unknown"
+
+
+def test_identical_quote_to_prior_day_is_flagged_stale():
+    s = seed_state()
+    today = _next_day(s)  # 9/17 quotes carried over unchanged, as the stale 9/17 page did with 9/16 data
+    sig = compute_signals(s, today)
+    assert all(r == "identical to the prior day's quote (stale feed?)" for r in sig.put_comparability_1d.values())

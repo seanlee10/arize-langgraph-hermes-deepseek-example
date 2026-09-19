@@ -49,6 +49,9 @@ def writer_brief(state: WatchState, record: DailyRecord, recon: Reconciliation,
 {record.signals.model_dump_json(indent=2) if record.signals else '{}'}
 ```
 
+signals.put_comparability_1d가 null이 아닌 strike의 1일 put 변화는 데이터 출처 변경/stale 데이터이므로
+시장 움직임으로 서술하지 마라.
+
 ## 촉매 (번호로 인용)
 {catalysts}
 

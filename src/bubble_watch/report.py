@@ -61,6 +61,10 @@ def _put_basis_note(record: DailyRecord) -> str:
             f"**recorded-to-recorded 변화**다. 공식 EOD-to-EOD 수익률로 과도하게 해석하면 안 된다.")
 
 
+def _flag(record: DailyRecord, strike: int) -> str:
+    return " †" if record.signals.put_comparability_1d.get(strike) else ""
+
+
 def _iv_note(record: DailyRecord, state: WatchState) -> str:
     sig = record.signals
     base = sig.base_dates.get("1d")
@@ -75,7 +79,10 @@ def _iv_note(record: DailyRecord, state: WatchState) -> str:
             parts.append(f"${k}P {c.prior:.2f}% ({c.prior_date}) → **{c.current:.2f}%**")
     verified = {c.prior_date for c in sig.iv.values() if c.prior_date}
     lead = "IV 비교: " if verified <= {base} else "IV 비교 (1일 변화가 아니라 **last-verified 비교**): "
-    return lead + ", ".join(parts)
+    note = lead + ", ".join(parts)
+    if any("alphavantage" in q.source_url for q in record.puts.values()):
+        note += " (Alpha Vantage IV는 약 0.98%p 단위로 제공되므로 한 단계 이내의 변화는 noise로 본다.)"
+    return note
 
 
 def render_report(state: WatchState, record: DailyRecord, recon: Reconciliation, narrative: Narrative, *,
@@ -104,7 +111,10 @@ def render_report(state: WatchState, record: DailyRecord, recon: Reconciliation,
     for k in state.strikes:
         q = record.puts.get(k) or PutQuote(strike=k)
         out.append(f"| **${k}P** | {money(q.bid)} | {money(q.ask)} | {money(q.mid)} | {money(q.last)} | "
-                   f"{spct(sig.put_changes['1d'][k])} | {_iv(q.iv)} | {_num(q.volume)} | {_num(q.oi)} |")
+                   f"{spct(sig.put_changes['1d'][k])}{_flag(record, k)} | {_iv(q.iv)} | {_num(q.volume)} | {_num(q.oi)} |")
+    flagged = [(k, reason) for k, reason in sig.put_comparability_1d.items() if reason]
+    if flagged:
+        out += [""] + [f"† ${k}P: {reason} — 시장 움직임으로 해석하지 말 것" for k, reason in flagged]
     out += ["", _iv_note(record, state), "", narrative.options_ko, ""]
 
     anchor = state.anchors[0] if state.anchors else None
@@ -113,7 +123,8 @@ def render_report(state: WatchState, record: DailyRecord, recon: Reconciliation,
             "| 구간 | " + " | ".join([*state.symbols, *(f"${k}P" for k in state.strikes)]) + " |",
             "|---|" + "---:|" * (len(state.symbols) + len(state.strikes))]
     for w, label in windows:
-        cells = [spct(sig.returns[w][s]) for s in state.symbols] + [spct(sig.put_changes[w][k]) for k in state.strikes]
+        cells = [spct(sig.returns[w][s]) for s in state.symbols] + [
+            spct(sig.put_changes[w][k]) + (_flag(record, k) if w == "1d" else "") for k in state.strikes]
         out.append(f"| **{label}** | " + " | ".join(cells) + " |")
     bases = ", ".join(f"{label}: {sig.base_dates.get(w) or 'N/A'} 대비" for w, label in windows)
     out += ["", (f"기준일 — {bases}. {lev}는 daily 3× 레버리지 ETF라 multi-day 수익률의 절대 크기를 "

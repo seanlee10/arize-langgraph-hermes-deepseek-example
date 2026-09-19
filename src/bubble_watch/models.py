@@ -97,6 +97,8 @@ class Signals(BaseModel):
     rel_spread: dict[str, float | None]                # window -> ticker − peer, %p
     put_changes: dict[str, dict[int, float | None]]    # window -> strike -> %
     put_freshness_1d: tuple[str, str] | None = None    # (base freshness, today freshness)
+    # strike -> None when the 1-day put change is like-for-like, else why it is not a market move
+    put_comparability_1d: dict[int, str | None] = Field(default_factory=dict)
     convexity_order_1d: list[int] = Field(default_factory=list)
     iv: dict[int, IVCompare] = Field(default_factory=dict)
     iv_surface_up: bool | None = None

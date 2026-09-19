@@ -50,6 +50,17 @@ def test_report_tables_come_from_code():
     assert "Analyst disagreement" not in md and "단일 analyst" not in md
 
 
+def test_flagged_put_changes_are_marked_and_explained():
+    views = {"hermes": _view(8.2), "dsh": _view(8.2)}
+    s, rec, recon = _setup(views)
+    rec.signals.put_comparability_1d = {200: "source changed: www.alphavantage.co → finance.yahoo.com", 210: None,
+                                        220: None}
+    md = render_report(s, rec, recon, NARR, views=views, notes=[])
+    assert "| -45.10% † |" in md
+    assert "† $200P: source changed: www.alphavantage.co → finance.yahoo.com — 시장 움직임으로 해석하지 말 것" in md
+    assert "0.98%p" in md  # Alpha Vantage IV granularity note
+
+
 def test_disagreement_and_single_sections():
     views = {"hermes": _view(7.0, "TRIGGERED_DE_CONFIRMING"), "dsh": _view(8.6, "TRIGGERED")}
     s, rec, recon = _setup(views)
