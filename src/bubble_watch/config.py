@@ -70,7 +70,7 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         arize_endpoint=_env("ARIZE_COLLECTOR_ENDPOINT", "https://otlp.arize.com/v1"),
         tavily_api_key=_env("TAVILY_API_KEY"),
         exa_api_key=_env("EXA_API_KEY"),
-        alphavantage_api_key=_env("ALPHAVANTAGE_API_KEY"),
+        alphavantage_api_key=_env("ALPHAVANTAGE_API_KEY") or _env("ALPHA_VANTAGE_API_KEY"),
     )
 
 

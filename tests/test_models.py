@@ -84,3 +84,11 @@ def test_inline_comment_after_empty_value_is_not_a_value(tmp_path, monkeypatch):
     s = load_settings(env)
     assert s.exa_api_key == ""
     assert s.hermes_api_key == "real-secret"
+
+
+def test_alpha_vantage_key_accepts_both_spellings(tmp_path, monkeypatch):
+    monkeypatch.delenv("ALPHAVANTAGE_API_KEY", raising=False)
+    monkeypatch.setenv("ALPHA_VANTAGE_API_KEY", "av-k")
+    assert load_settings(tmp_path / "none.env").alphavantage_api_key == "av-k"
+    monkeypatch.setenv("ALPHAVANTAGE_API_KEY", "av-primary")
+    assert load_settings(tmp_path / "none.env").alphavantage_api_key == "av-primary"
