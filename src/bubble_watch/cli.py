@@ -45,7 +45,8 @@ def doctor_checks(settings: Settings, client: httpx.Client) -> list[tuple[str, b
                    "set" if "XAI_API_KEY" not in missing else "missing in .env"))
     for name, value, why in (("ARIZE_SPACE_ID", settings.arize_space_id, "tracing"),
                              ("ARIZE_API_KEY", settings.arize_api_key, "tracing"),
-                             ("EXA_API_KEY", settings.exa_api_key, "dsh web_search"),
+                             ("TAVILY_API_KEY", settings.tavily_api_key, "web search for both analysts"),
+                             ("EXA_API_KEY", settings.exa_api_key, "web search fallback"),
                              ("ALPHAVANTAGE_API_KEY", settings.alphavantage_api_key, "historical option snapshots")):
         checks.append((f"env {name}", bool(value), False, f"set ({why})" if value else f"not set — {why} disabled"))
     state = _state_path(settings)
@@ -109,8 +110,10 @@ def hermes_gateway_env(settings: Settings, home: Path) -> dict[str, str]:
     env.update(HERMES_HOME=str(home), API_SERVER_ENABLED="true", API_SERVER_KEY=resolve_hermes_key(settings),
                API_SERVER_PORT=str(urlparse(settings.hermes_api_url).port or 8642),
                XAI_API_KEY=settings.xai_api_key, TIRITH_ENABLED="false")
-    if settings.exa_api_key:
-        env["EXA_API_KEY"] = settings.exa_api_key  # Hermes web_search auto-selects Exa
+    # Hermes auto-selects its web_search backend from these keys (Tavily ranks before Exa).
+    for name, value in (("TAVILY_API_KEY", settings.tavily_api_key), ("EXA_API_KEY", settings.exa_api_key)):
+        if value:
+            env[name] = value
     return env
 
 

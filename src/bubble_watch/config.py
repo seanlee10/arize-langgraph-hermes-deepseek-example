@@ -34,6 +34,7 @@ class Settings:
     arize_api_key: str
     arize_project: str
     arize_endpoint: str
+    tavily_api_key: str
     exa_api_key: str
     alphavantage_api_key: str
 
@@ -67,6 +68,7 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         arize_api_key=_env("ARIZE_API_KEY"),
         arize_project=_env("ARIZE_PROJECT_NAME", "bubble-watch"),
         arize_endpoint=_env("ARIZE_COLLECTOR_ENDPOINT", "https://otlp.arize.com/v1"),
+        tavily_api_key=_env("TAVILY_API_KEY"),
         exa_api_key=_env("EXA_API_KEY"),
         alphavantage_api_key=_env("ALPHAVANTAGE_API_KEY"),
     )

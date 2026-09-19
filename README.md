@@ -3,7 +3,9 @@
 Daily "NVDA Bubble Signal Watch" (Korean) produced by a LangGraph pipeline with two independent analyst
 sub-agents — **Hermes Agent** (HTTP gateway) and **DeepSeek Harness** (Python SDK) — both on Grok 4.6.
 Every number in the report is computed in code; the agents contribute research, cited catalysts and
-judgment, reconciled in code (one rebuttal round when they disagree). Traced to Arize AX.
+judgment, reconciled in code (one rebuttal round when they disagree). Both analysts search the web with
+Tavily (Hermes natively; dsh through `dsh/plugins/web-search-tavily.mjs`, since dsh ships no Tavily backend).
+Traced to Arize AX.
 
 ```
 fetch_market_data → fill_gaps (Hermes) → compute_signals
@@ -21,7 +23,8 @@ fetch_market_data → fill_gaps (Hermes) → compute_signals
    isolated `HERMES_HOME` (`.hermes-analyst/`, model `grok-4.6` via `xai`) and only the API server enabled.
    Keys come from this project's `.env`; messaging-platform variables are stripped, so your main `~/.hermes`
    bots never come online from it. (To trace Hermes internally too, install the `observability/arize` plugin.)
-4. `cp .env.example .env` and fill in the keys (do this before step 3). `HERMES_API_KEY` is any secret you choose; `hermes-gateway` uses it as the gateway's `API_SERVER_KEY`.
+4. `cp .env.example .env` and fill in the keys (do this before step 3): `XAI_API_KEY` and `TAVILY_API_KEY`.
+   The gateway key needs no setup: it is generated into `.hermes-analyst/api_server.key` on first use.
 5. `uv run bubble-watch seed` then `uv run bubble-watch doctor`.
 
 ## Run

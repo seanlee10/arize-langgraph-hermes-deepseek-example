@@ -9,8 +9,9 @@ from ..config import PROJECT_ROOT, Settings
 from .base import AnalystError, AnalystResult, AskResult, ask_for_view
 from .prompts import SYSTEM_ANALYST
 
-EXA_PATCH_TEMPLATE = PROJECT_ROOT / "dsh" / "exa-search.patch.yml"
-EXA_PLUGIN_ENTRY = "packages/web/web-search-exa/lib/index.js"
+SEARCH_PATCH_TEMPLATE = PROJECT_ROOT / "dsh" / "web-search.patch.yml"
+TAVILY_PLUGIN = PROJECT_ROOT / "dsh" / "plugins" / "web-search-tavily.mjs"
+EXA_PLUGIN_ENTRY = "packages/web/web-search-exa/lib/index.js"  # inside the dsh checkout
 
 _SETTINGS_TEMPLATE = """\
 # Written by bubble-watch: registers xAI (Grok) for the dsh analyst through the llm-pi-ai adapter.
@@ -36,13 +37,28 @@ def ensure_dsh_home(dsh_home: str, model: str, provider: str = "xai",
     return path
 
 
-def render_exa_patch(dsh_home: str, dsh_repo: str) -> Path:
-    """Write the Exa overlay into DSH_HOME with the plugin's absolute entry path from the dsh checkout."""
-    path = Path(dsh_home) / "exa-search.patch.yml"
+def render_search_patch(dsh_home: str, provider: str, plugin_entry: Path, api_key_env: str) -> Path:
+    """Write the web-search overlay into DSH_HOME for one provider (see dsh/web-search.patch.yml)."""
+    path = Path(dsh_home) / "web-search.patch.yml"
     path.parent.mkdir(parents=True, exist_ok=True)
-    entry = Path(dsh_repo).expanduser() / EXA_PLUGIN_ENTRY
-    path.write_text(EXA_PATCH_TEMPLATE.read_text().replace("{exa_plugin_entry}", str(entry)))
+    text = SEARCH_PATCH_TEMPLATE.read_text()
+    for key, value in (("{provider}", provider), ("{plugin_entry}", str(plugin_entry)), ("{api_key_env}", api_key_env)):
+        text = text.replace(key, value)
+    path.write_text(text)
     return path
+
+
+def search_patches(settings: Settings) -> tuple[tuple[str, ...], dict[str, str]]:
+    """(patch files, env) for dsh web_search: Tavily if TAVILY_API_KEY, else Exa, else none (dsh's
+    default search needs a DeepSeek key, so the analyst would have web_fetch only)."""
+    if settings.tavily_api_key:
+        patch = render_search_patch(settings.dsh_home, "tavily", TAVILY_PLUGIN, "TAVILY_API_KEY")
+        return (str(patch),), {"TAVILY_API_KEY": settings.tavily_api_key}
+    if settings.exa_api_key:
+        entry = Path(settings.dsh_repo).expanduser() / EXA_PLUGIN_ENTRY
+        patch = render_search_patch(settings.dsh_home, "exa", entry, "EXA_API_KEY")
+        return (str(patch),), {"EXA_API_KEY": settings.exa_api_key}
+    return (), {}
 
 
 def make_harness_factory(settings: Settings) -> Callable[[], Any]:
@@ -50,11 +66,8 @@ def make_harness_factory(settings: Settings) -> Callable[[], Any]:
         from deepseek_harness import DeepSeekHarness
 
         ensure_dsh_home(settings.dsh_home, settings.dsh_model, settings.dsh_provider, settings.xai_base_url)
-        env = {"XAI_API_KEY": settings.xai_api_key}
-        patches: tuple[str, ...] = ()
-        if settings.exa_api_key:
-            env["EXA_API_KEY"] = settings.exa_api_key
-            patches = (str(render_exa_patch(settings.dsh_home, settings.dsh_repo)),)
+        patches, search_env = search_patches(settings)
+        env = {"XAI_API_KEY": settings.xai_api_key, **search_env}
         return DeepSeekHarness(
             dsh_bin=settings.dsh_bin, dsh_home=settings.dsh_home, cwd=str(PROJECT_ROOT),
             provider=settings.dsh_provider, model=settings.dsh_model, patches=patches, env=env,

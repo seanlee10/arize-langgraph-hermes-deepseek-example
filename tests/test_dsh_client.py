@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -58,13 +59,24 @@ def test_ensure_dsh_home_writes_settings_once(tmp_path):
     assert path.read_text() == "custom: true\n"
 
 
-def test_exa_patch_is_rendered_with_absolute_plugin_entry(tmp_path):
-    from bubble_watch.agents.dsh_client import render_exa_patch
 
-    repo = tmp_path / "dsh-repo"
-    path = render_exa_patch(str(tmp_path / "home"), str(repo))
-    text = path.read_text()
-    assert path.parent == tmp_path / "home"
-    assert f"name: '{repo}/packages/web/web-search-exa/lib/index.js'" in text
-    assert "searchProvider: exa" in text and "!!js process.env.EXA_API_KEY" in text
-    assert "{exa_plugin_entry}" not in text
+def test_search_patch_prefers_tavily_then_exa_then_none(tmp_path, monkeypatch):
+    from bubble_watch.agents.dsh_client import search_patches
+    from bubble_watch.config import PROJECT_ROOT, load_settings
+
+    for name in ("TAVILY_API_KEY", "EXA_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("DSH_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("DSH_REPO", str(tmp_path / "repo"))
+    assert search_patches(load_settings(tmp_path / "none.env")) == ((), {})
+
+    monkeypatch.setenv("EXA_API_KEY", "exa-k")
+    patches, env = search_patches(load_settings(tmp_path / "none.env"))
+    assert "searchProvider: exa" in Path(patches[0]).read_text() and env == {"EXA_API_KEY": "exa-k"}
+
+    monkeypatch.setenv("TAVILY_API_KEY", "tvly-k")
+    patches, env = search_patches(load_settings(tmp_path / "none.env"))
+    text = Path(patches[0]).read_text()
+    assert "searchProvider: tavily" in text and "!!js process.env.TAVILY_API_KEY" in text
+    assert f"name: '{PROJECT_ROOT / 'dsh' / 'plugins' / 'web-search-tavily.mjs'}'" in text
+    assert env == {"TAVILY_API_KEY": "tvly-k"}

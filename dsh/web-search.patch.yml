@@ -1,0 +1,16 @@
+# bubble-watch overlay TEMPLATE: route dsh web_search through a keyed search backend.
+# render_search_patch() writes it into DSH_HOME with the placeholders filled in:
+#   {provider}          tavily (bubble-watch's dsh/plugins/web-search-tavily.mjs) or exa (dsh's own plugin)
+#   {plugin_entry}      absolute path of the plugin's ES module: a plugin `name` is not evaluated as
+#                       !!js, and dsh's base bundle cannot resolve these packages by name
+#   {api_key_env}       the env var holding the provider's key
+- id: web
+  config:
+    searchProvider: {provider}
+    fetchProvider: http
+
+- insert:
+    - id: web-search-{provider}
+      name: '{plugin_entry}'
+      config:
+        apiKey: !!js process.env.{api_key_env}
