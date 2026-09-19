@@ -18,7 +18,9 @@ _CONDITION_LABEL = {
     "iv_surface_up": "IV surface 전체 상승",
     "far_otm_leads": "${lo}P가 다른 put보다 빠르게 상승",
 }
-_CONDITION_VALUE = {"true": "성립", "partial": "부분 성립 (1일만)", "false": "불성립", "unknown": "데이터 없음"}
+_CONDITION_VALUE = {"true": "성립", "false": "불성립", "unknown": "데이터 없음"}
+# "partial" means something different per condition.
+_PARTIAL_LABEL = {"nvda_underperforms": "부분 성립 (1일만)", "iv_surface_up": "판단 불가 (한 단계 이내 상승)"}
 _MODE_LABEL = {"agree": "두 analyst 합의", "agree_after_rebuttal": "반박 라운드 후 합의",
                "disagree": "반박 라운드 후에도 불일치 → 평균 점수, 더 보수적인 판정", "single": "단일 analyst 기준"}
 
@@ -126,7 +128,9 @@ def render_report(state: WatchState, record: DailyRecord, recon: Reconciliation,
     lo = min(state.strikes)
     out += [f"### 판정: `{VERDICT_LABEL[recon.verdict]}`", "", narrative.verdict_ko, "", narrative.watch_ko, "",
             "| 재확인 조건 | 오늘 |", "|---|---|"]
-    out += [f"| {_CONDITION_LABEL[k].format(t=t, p=p, lo=lo)} | {_CONDITION_VALUE[v]} |" for k, v in sig.conditions.items()]
+    out += [f"| {_CONDITION_LABEL[k].format(t=t, p=p, lo=lo)} | "
+            f"{_PARTIAL_LABEL.get(k, '부분 성립') if v == 'partial' else _CONDITION_VALUE[v]} |"
+            for k, v in sig.conditions.items()]
 
     out += ["", "### Analyst views", "", f"{_MODE_LABEL[recon.mode]}.", "",
             "| Analyst | Score | Verdict | Confidence |", "|---|---:|---|---|"]

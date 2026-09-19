@@ -86,3 +86,12 @@ def test_xai_writer_retries_then_fails():
                     client=httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(401, text="no"))))
     with pytest.raises(WriterError, match="401"):
         bad.write("brief")
+
+
+def test_partial_is_labelled_per_condition():
+    views = {"hermes": _view(8.0), "dsh": _view(8.0)}
+    s, rec, recon = _setup(views)
+    rec.signals.conditions = {"nvda_underperforms": "partial", "iv_surface_up": "partial", "far_otm_leads": "false"}
+    md = render_report(s, rec, recon, NARR, views=views, notes=[])
+    assert "| NVDA < SMH (여러 날 지속) | 부분 성립 (1일만) |" in md
+    assert "| IV surface 전체 상승 | 판단 불가 (한 단계 이내 상승) |" in md
