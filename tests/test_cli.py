@@ -55,9 +55,13 @@ def test_hermes_gateway_env_is_api_only_and_isolated(tmp_path, monkeypatch):
     settings = load_settings(tmp_path / "none.env")
     home = ensure_hermes_home(tmp_path / "hh", "grok-4.6")
     assert "default: grok-4.6" in (home / "config.yaml").read_text()
-    assert "provider: xai" in (home / "config.yaml").read_text()
+    cfg = (home / "config.yaml").read_text()
+    assert "provider: xai" in cfg
+    # web research only: no terminal, so Hermes never needs (or downloads) the tirith scanner
+    assert "api_server: [web]" in cfg and "tirith_enabled: false" in cfg
     env = hermes_gateway_env(settings, home)
     assert env["HERMES_HOME"] == str(home) and env["API_SERVER_ENABLED"] == "true"
     assert env["API_SERVER_KEY"] == "gw-k" and env["API_SERVER_PORT"] == "8650"
     assert env["XAI_API_KEY"] == "xai-k" and env["EXA_API_KEY"] == "exa-k"
     assert "TELEGRAM_BOT_TOKEN" not in env
+    assert env["TIRITH_ENABLED"] == "false"

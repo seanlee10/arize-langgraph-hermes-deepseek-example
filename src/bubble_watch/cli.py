@@ -86,6 +86,12 @@ _HERMES_CONFIG = """\
 model:
   default: {model}
   provider: xai
+# The analyst only researches: web_search + web_extract. No terminal toolset means no shell
+# commands to pre-scan, so the tirith scanner (auto-downloaded from GitHub) is not needed.
+platform_toolsets:
+  api_server: [web]
+security:
+  tirith_enabled: false
 """
 # Messaging platforms read their credentials from env; never let this gateway bring a bot online.
 _PLATFORM_ENV_PREFIXES = ("TELEGRAM_", "DISCORD_", "SLACK_", "WHATSAPP_", "SIGNAL_", "MATRIX_", "MATTERMOST_",
@@ -105,7 +111,7 @@ def hermes_gateway_env(settings: Settings, home: Path) -> dict[str, str]:
     env = {k: v for k, v in os.environ.items() if not k.startswith(_PLATFORM_ENV_PREFIXES)}
     env.update(HERMES_HOME=str(home), API_SERVER_ENABLED="true", API_SERVER_KEY=settings.hermes_api_key,
                API_SERVER_PORT=str(urlparse(settings.hermes_api_url).port or 8642),
-               XAI_API_KEY=settings.xai_api_key)
+               XAI_API_KEY=settings.xai_api_key, TIRITH_ENABLED="false")
     if settings.exa_api_key:
         env["EXA_API_KEY"] = settings.exa_api_key  # Hermes web_search auto-selects Exa
     return env
