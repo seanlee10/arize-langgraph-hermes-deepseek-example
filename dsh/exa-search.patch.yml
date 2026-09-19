@@ -1,0 +1,11 @@
+# bubble-watch overlay: route dsh web_search through Exa (EXA_API_KEY) instead of DeepSeek search.
+- id: web
+  config:
+    searchProvider: exa
+    fetchProvider: http
+
+- insert:
+    - id: web-search-exa
+      name: '@deepseek-ai/dsh-web-search-exa'
+      config:
+        apiKey: !!js process.env.EXA_API_KEY
