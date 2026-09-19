@@ -17,10 +17,11 @@ fetch_market_data → fill_gaps (Hermes) → compute_signals
 2. dsh runtime: build your DeepSeek Harness checkout under Node ≥ 22.19
    (`PATH=~/.nvm/versions/node/v24.21.0/bin:$PATH pnpm install && pnpm run build` in `~/projects/deepseek-harness`).
    `bin/dsh` launches it with Node 24 (`DSH_NODE` / `DSH_REPO` override the paths).
-3. Hermes gateway on Grok 4.6: in `~/.hermes/.env` set `XAI_API_KEY`, `API_SERVER_ENABLED=true`,
-   `API_SERVER_KEY=<choose one>`; set the Hermes model to `grok-4.6` (provider `xai`) with `hermes model`;
-   then `hermes gateway run`. Optional: enable the `observability/arize` plugin for Hermes' own trace.
-4. `cp .env.example .env` and fill in the keys (`HERMES_API_KEY` = the `API_SERVER_KEY` above).
+3. Hermes gateway on Grok 4.6: `uv run bubble-watch hermes-gateway` runs `hermes gateway run` with an
+   isolated `HERMES_HOME` (`.hermes-analyst/`, model `grok-4.6` via `xai`) and only the API server enabled.
+   Keys come from this project's `.env`; messaging-platform variables are stripped, so your main `~/.hermes`
+   bots never come online from it. (To trace Hermes internally too, install the `observability/arize` plugin.)
+4. `cp .env.example .env` and fill in the keys (do this before step 3). `HERMES_API_KEY` is any secret you choose; `hermes-gateway` uses it as the gateway's `API_SERVER_KEY`.
 5. `uv run bubble-watch seed` then `uv run bubble-watch doctor`.
 
 ## Run
