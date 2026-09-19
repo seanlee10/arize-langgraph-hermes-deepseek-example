@@ -5,3 +5,5 @@ __pycache__/
 .arize-tmp-traces/
 reports/
 *.pyc
+# Keep specs/plans tracked despite the global gitignore rule for docs/
+!docs/
