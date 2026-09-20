@@ -82,3 +82,60 @@ def test_env_is_isolated_web_only_and_bot_free(tmp_path, monkeypatch):
     assert env["HERMES_HOME"] == str(home) and env["TIRITH_ENABLED"] == "false"
     assert env["XAI_API_KEY"] == "xai-k" and env["TAVILY_API_KEY"] == "tv-k"
     assert "TELEGRAM_BOT_TOKEN" not in env and "API_SERVER_ENABLED" not in env
+
+
+def _fake_install(tmp_path):
+    """A stand-in for ~/.hermes/hermes-agent/plugins."""
+    installed = tmp_path / "install" / "plugins"
+    (installed / "observability" / "langfuse").mkdir(parents=True)
+    (installed / "web").mkdir()
+    (installed / "plugin_loader.py").write_text("# loader\n")
+    repo = tmp_path / "repo" / "plugins" / "observability" / "arize"
+    repo.mkdir(parents=True)
+    (repo / "__init__.py").write_text("# arize plugin\n")
+    return installed, tmp_path / "repo"
+
+
+def test_plugin_mirror_adds_arize_without_touching_the_install(tmp_path):
+    from bubble_watch.agents.hermes_cli import ensure_hermes_plugins
+
+    installed, repo = _fake_install(tmp_path)
+    mirror = ensure_hermes_plugins(tmp_path / "hh", installed, repo)
+    assert (mirror / "web").is_symlink() and (mirror / "plugin_loader.py").is_symlink()
+    assert (mirror / "observability" / "langfuse").is_symlink()          # existing plugins still reachable
+    assert (mirror / "observability" / "arize" / "__init__.py").exists()  # ours added
+    assert not (installed / "observability" / "arize").exists()          # install untouched
+    ensure_hermes_plugins(tmp_path / "hh", installed, repo)               # idempotent
+
+
+def test_env_enables_the_plugin_and_passes_arize_credentials(tmp_path, monkeypatch):
+    monkeypatch.setenv("XAI_API_KEY", "xai-k")
+    monkeypatch.setenv("ARIZE_SPACE_ID", "space")
+    monkeypatch.setenv("ARIZE_API_KEY", "ak")
+    monkeypatch.setenv("ARIZE_PROJECT_NAME", "bubble-watch")
+    installed, repo = _fake_install(tmp_path)
+    monkeypatch.setenv("HERMES_INSTALL_DIR", str(installed.parent))
+    monkeypatch.setenv("HERMES_REPO", str(repo))
+    settings = load_settings(tmp_path / "none.env")
+    home = ensure_hermes_home(tmp_path / "hh", "grok-4.6")
+    env = hermes_env(settings, home)
+    assert "observability/arize" in (home / "config.yaml").read_text()
+    assert env["HERMES_BUNDLED_PLUGINS"] == str(home / "plugins")
+    # same project as the orchestrator, so the nested spans land in one trace
+    assert env["HERMES_ARIZE_PROJECT_NAME"] == "bubble-watch"
+    assert env["HERMES_ARIZE_SPACE_ID"] == "space" and env["HERMES_ARIZE_API_KEY"] == "ak"
+
+
+def test_traceparent_is_passed_per_call(tmp_path):
+    from opentelemetry.sdk.trace import TracerProvider
+
+    runner = FakeRunner([json.dumps(VIEW), json.dumps(VIEW)])
+    analyst = _analyst(runner, tmp_path)
+    tracer = TracerProvider().get_tracer("t")
+    with tracer.start_as_current_span("hermes analyst") as span:
+        analyst.ask("p")
+        ctx = span.get_span_context()
+    assert runner.calls[0]["env"]["HERMES_ARIZE_TRACEPARENT"] == \
+        f"00-{ctx.trace_id:032x}-{ctx.span_id:016x}-01"
+    analyst.ask("p")  # no active span: nothing to attach to
+    assert "HERMES_ARIZE_TRACEPARENT" not in runner.calls[1]["env"]

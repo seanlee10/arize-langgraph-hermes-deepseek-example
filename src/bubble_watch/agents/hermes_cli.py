@@ -29,11 +29,41 @@ platform_toolsets:
   api_server: [web]
 security:
   tirith_enabled: false
+# Hermes traces its own turn/LLM/tool spans into the caller's trace (HERMES_ARIZE_TRACEPARENT).
+plugins:
+  enabled:
+    - observability/arize
 """
 # Messaging platforms read their credentials from env; never let this home bring a bot online.
 _PLATFORM_ENV_PREFIXES = ("TELEGRAM_", "DISCORD_", "SLACK_", "WHATSAPP_", "SIGNAL_", "MATRIX_", "MATTERMOST_",
                           "BLUEBUBBLES_", "WEIXIN_", "YUANBAO_", "QQBOT_", "TEAMS_", "MSGRAPH_", "EMAIL_", "SMS_")
 _SESSION_ID = re.compile(r"session_id:\s*(\S+)")
+_TRACEPARENT = "HERMES_ARIZE_TRACEPARENT"
+
+
+def ensure_hermes_plugins(home: Path, installed_plugins: Path, hermes_repo: Path) -> Path | None:
+    """Mirror the installed plugins dir into HERMES_HOME by symlink and add bubble-watch's
+    observability/arize plugin, so the analyst home can enable it without touching the install."""
+    source = Path(installed_plugins)
+    arize = Path(hermes_repo) / "plugins" / "observability" / "arize"
+    if not source.is_dir() or not arize.is_dir():
+        return None
+    mirror = Path(home) / "plugins"
+    (mirror / "observability").mkdir(parents=True, exist_ok=True)
+    for child in source.iterdir():
+        if child.name == "observability":
+            continue
+        link = mirror / child.name
+        if not link.exists():
+            link.symlink_to(child)
+    for child in (source / "observability").iterdir():
+        link = mirror / "observability" / child.name
+        if not link.exists():
+            link.symlink_to(child)
+    link = mirror / "observability" / "arize"
+    if not link.exists():
+        link.symlink_to(arize)
+    return mirror
 
 
 def ensure_hermes_home(home: Path, model: str) -> Path:
@@ -49,11 +79,27 @@ def hermes_env(settings: Settings, home: Path) -> dict[str, str]:
     """Process env for Hermes: isolated home, tirith off, model + search keys, messaging variables stripped."""
     env = {k: v for k, v in os.environ.items() if not k.startswith(_PLATFORM_ENV_PREFIXES)}
     env.update(HERMES_HOME=str(home), XAI_API_KEY=settings.xai_api_key, TIRITH_ENABLED="false")
+    mirror = ensure_hermes_plugins(home, Path(settings.hermes_install_dir) / "plugins", Path(settings.hermes_repo))
+    if mirror and settings.arize_space_id and settings.arize_api_key:
+        # Same Arize project as the orchestrator: nested spans only join one trace within a project.
+        env.update(HERMES_BUNDLED_PLUGINS=str(mirror), HERMES_ARIZE_SPACE_ID=settings.arize_space_id,
+                   HERMES_ARIZE_API_KEY=settings.arize_api_key, HERMES_ARIZE_PROJECT_NAME=settings.arize_project,
+                   HERMES_ARIZE_COLLECTOR_ENDPOINT=settings.arize_endpoint)
     # Hermes auto-selects its web_search backend from these keys (Tavily ranks before Exa).
     for name, value in (("TAVILY_API_KEY", settings.tavily_api_key), ("EXA_API_KEY", settings.exa_api_key)):
         if value:
             env[name] = value
     return env
+
+
+def _traceparent_env() -> dict[str, str]:
+    """W3C traceparent for the active span, so the Hermes process traces into this run's trace."""
+    from opentelemetry import trace
+
+    ctx = trace.get_current_span().get_span_context()
+    if not ctx.is_valid:
+        return {}
+    return {_TRACEPARENT: f"00-{ctx.trace_id:032x}-{ctx.span_id:016x}-{'01' if ctx.trace_flags.sampled else '00'}"}
 
 
 class HermesCliAnalyst:
@@ -73,10 +119,11 @@ class HermesCliAnalyst:
             f.write(query)
         cmd = [self._bin, "chat", "--query-file", f.name, "-Q", "-t", "web", "--provider", self._provider,
                "-m", self._model, "--ignore-rules", "--run-budget", str(int(self._timeout))]
+        env = {**self._env, **_traceparent_env()}
         if session_id:
             cmd += ["--resume", session_id]
         try:
-            proc = self._run(cmd, capture_output=True, text=True, env=self._env, timeout=self._timeout + 60,
+            proc = self._run(cmd, capture_output=True, text=True, env=env, timeout=self._timeout + 60,
                              check=False)
         except subprocess.TimeoutExpired as exc:
             raise AnalystError(f"hermes timed out after {int(self._timeout) + 60}s") from exc
