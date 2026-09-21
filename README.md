@@ -7,11 +7,19 @@ judgment, reconciled in code (one rebuttal round when they disagree). Both analy
 Tavily (Hermes natively; dsh through `dsh/plugins/web-search-tavily.mjs`, since dsh ships no Tavily backend).
 Traced to Arize AX.
 
+![Architecture: LangGraph orchestrating Hermes Agent and DeepSeek Harness, with one trace across all three runtimes](docs/architecture.png)
+
 ```
 fetch_market_data (Alpha Vantage) → fill_gaps (Hermes) → compute_signals
   → hermes_analyst ∥ dsh_analyst → reconcile ─┬→ write_report → save_state
                                    ↑ rebuttal ←┘ (only on disagreement)
 ```
+
+Both analysts sit behind one contract (`analyze(brief) -> AnalystResult`), so the graph does not care which
+runtime is behind them: schema-validated output, one corrective retry in-session, and a single-analyst
+fallback when one fails. Observability differs per runtime — LangGraph is auto-instrumented, dsh's tool
+spans are rebuilt from its event stream, and Hermes traces itself through a W3C `traceparent` passed across
+the process boundary — but every span lands in one trace.
 
 ## Setup
 
