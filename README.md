@@ -73,6 +73,11 @@ uv run bubble-watch doctor                           # keys, runtimes, model ava
 One run is one trace in the Arize project `bubble-watch` (`session.id = bubble-watch-<date>`). **Open the
 trace, not the session**: Hermes' spans carry Hermes' own session id, so a session-filtered view hides them.
 
+Arize renders the run as a graph too — the same topology as the diagram above, recovered from the spans,
+with the run's input state alongside:
+
+![Arize graph view of the run: Start → Fetch_market_data → Fill_gaps → Compute_signals → the two parallel analysts → Reconcile → Write_report → Save_state → End](docs/trace-graph.png)
+
 dsh's tool calls are reconstructed from the SDK event stream, so `web_search` / `web_fetch` appear with their
 arguments and results:
 
