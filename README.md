@@ -42,9 +42,24 @@ uv run bubble-watch run --date 2026-09-18 --dry-run  # report only
 uv run bubble-watch run --no-agents                  # data + signals only, no LLM calls
 ```
 
-Traces: Arize project `bubble-watch` (one trace per run, `session.id = bubble-watch-<date>`). The Hermes
-analyst span carries `hermes.session_id`, which links to Hermes' own trace in the `hermes-agent` project.
-dsh tool calls appear as TOOL spans rebuilt from the SDK events (no per-tool timing).
+## Tracing
+
+One run is one trace in the Arize project `bubble-watch` (`session.id = bubble-watch-<date>`). **Open the
+trace, not the session**: Hermes' spans carry Hermes' own session id, so a session-filtered view hides them.
+
+dsh's tool calls are reconstructed from the SDK event stream, so `web_search` / `web_fetch` appear with
+their arguments and results:
+
+![dsh analyst span with reconstructed web_search and web_fetch tool spans](docs/trace-dsh.png)
+
+Hermes traces itself: the `observability/arize` plugin receives a W3C `traceparent` per call and parents its
+turn on the caller's span, so `Hermes turn`, its LLM calls (with tokens and cost) and its tool calls nest
+under `hermes analyst`:
+
+![Hermes turn nested under the hermes analyst span, with LLM calls, web_search and web_extract](docs/trace-hermes.png)
+
+Trace status is ERROR when any span failed, including a single recoverable tool error (a page that refuses
+to load). The run itself still completes: a failed analyst degrades to a single-analyst report.
 
 ## Data rules
 
