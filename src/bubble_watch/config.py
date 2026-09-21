@@ -23,7 +23,6 @@ class Settings:
     hermes_home: Path
     hermes_mode: str
     hermes_bin: str
-    hermes_install_dir: str
     hermes_repo: str
     dsh_bin: str
     dsh_repo: str
@@ -61,8 +60,8 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         hermes_home=Path(_env("HERMES_ANALYST_HOME", str(PROJECT_ROOT / ".hermes-analyst"))),
         # oneshot: a `hermes chat` subprocess per call; gateway: HTTP to `bubble-watch hermes-gateway` (e.g. on EC2)
         hermes_mode=_env("HERMES_MODE", "oneshot"),
-        hermes_bin=_env("HERMES_BIN", "hermes"),
-        hermes_install_dir=_env("HERMES_INSTALL_DIR", str(Path.home() / ".hermes" / "hermes-agent")),
+        # the repo checkout: Tavily web backend + the bundled observability/arize plugin
+        hermes_bin=_env("HERMES_BIN", str(PROJECT_ROOT / "bin" / "hermes")),
         hermes_repo=_env("HERMES_REPO", str(Path.home() / "projects" / "hermes-agent")),
         dsh_bin=_env("DSH_BIN", str(PROJECT_ROOT / "bin" / "dsh")),
         dsh_repo=_env("DSH_REPO", str(Path.home() / "projects" / "deepseek-harness")),

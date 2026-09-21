@@ -41,31 +41,6 @@ _SESSION_ID = re.compile(r"session_id:\s*(\S+)")
 _TRACEPARENT = "HERMES_ARIZE_TRACEPARENT"
 
 
-def ensure_hermes_plugins(home: Path, installed_plugins: Path, hermes_repo: Path) -> Path | None:
-    """Mirror the installed plugins dir into HERMES_HOME by symlink and add bubble-watch's
-    observability/arize plugin, so the analyst home can enable it without touching the install."""
-    source = Path(installed_plugins)
-    arize = Path(hermes_repo) / "plugins" / "observability" / "arize"
-    if not source.is_dir() or not arize.is_dir():
-        return None
-    mirror = Path(home) / "plugins"
-    (mirror / "observability").mkdir(parents=True, exist_ok=True)
-    for child in source.iterdir():
-        if child.name == "observability":
-            continue
-        link = mirror / child.name
-        if not link.exists():
-            link.symlink_to(child)
-    for child in (source / "observability").iterdir():
-        link = mirror / "observability" / child.name
-        if not link.exists():
-            link.symlink_to(child)
-    link = mirror / "observability" / "arize"
-    if not link.exists():
-        link.symlink_to(arize)
-    return mirror
-
-
 def ensure_hermes_home(home: Path, model: str) -> Path:
     """Create the isolated HERMES_HOME with a Grok, web-only config; never overwrite an existing one."""
     home.mkdir(parents=True, exist_ok=True)
@@ -79,11 +54,10 @@ def hermes_env(settings: Settings, home: Path) -> dict[str, str]:
     """Process env for Hermes: isolated home, tirith off, model + search keys, messaging variables stripped."""
     env = {k: v for k, v in os.environ.items() if not k.startswith(_PLATFORM_ENV_PREFIXES)}
     env.update(HERMES_HOME=str(home), XAI_API_KEY=settings.xai_api_key, TIRITH_ENABLED="false")
-    mirror = ensure_hermes_plugins(home, Path(settings.hermes_install_dir) / "plugins", Path(settings.hermes_repo))
-    if mirror and settings.arize_space_id and settings.arize_api_key:
+    if settings.arize_space_id and settings.arize_api_key:
         # Same Arize project as the orchestrator: nested spans only join one trace within a project.
-        env.update(HERMES_BUNDLED_PLUGINS=str(mirror), HERMES_ARIZE_SPACE_ID=settings.arize_space_id,
-                   HERMES_ARIZE_API_KEY=settings.arize_api_key, HERMES_ARIZE_PROJECT_NAME=settings.arize_project,
+        env.update(HERMES_ARIZE_SPACE_ID=settings.arize_space_id, HERMES_ARIZE_API_KEY=settings.arize_api_key,
+                   HERMES_ARIZE_PROJECT_NAME=settings.arize_project,
                    HERMES_ARIZE_COLLECTOR_ENDPOINT=settings.arize_endpoint)
     # Hermes auto-selects its web_search backend from these keys (Tavily ranks before Exa).
     for name, value in (("TAVILY_API_KEY", settings.tavily_api_key), ("EXA_API_KEY", settings.exa_api_key)):
@@ -132,7 +106,11 @@ class HermesCliAnalyst:
         finally:
             Path(f.name).unlink(missing_ok=True)
         if proc.returncode != 0:
-            raise AnalystError(f"hermes exited {proc.returncode}: {(proc.stderr or '')[-300:].strip()}")
+            # Hermes prints "session_id: …" last, so a tail alone hides the error: keep the lines that matter.
+            lines = [line for line in (proc.stderr or "").splitlines()
+                     if line.strip() and not line.startswith("session_id:")]
+            detail = " | ".join(lines[-6:])[:600] or (proc.stdout or "")[-300:].strip() or "no stderr"
+            raise AnalystError(f"hermes exited {proc.returncode}: {detail}")
         text = (proc.stdout or "").strip()
         if not text:
             raise AnalystError("hermes returned no answer")
