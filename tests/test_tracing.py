@@ -4,19 +4,7 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import StatusCode
 
-from bubble_watch.agents.base import AnalystResult
-from bubble_watch.models import AnalystView
-from bubble_watch.tracing import agent_span, annotate_result, dsh_tool_calls, get_tracer, setup_tracing
-
-EVENTS = [
-    {"type": "assistant/message", "data": {"message": {"role": "assistant", "content": [
-        {"type": "text", "text": "searching"},
-        {"type": "tool-call", "toolCallId": "c1", "toolName": "web_search", "input": {"query": "nvda huawei"}}]}}},
-    {"type": "tool/result", "data": {"message": {"source": {"kind": "tool", "callId": "c1"}, "content": [
-        {"type": "tool-result", "toolCallId": "c1", "toolName": "web_search", "output": {"results": 3}}]}}},
-    {"type": "tool/result", "data": {"error": {"code": "DENIED"}, "message": {"content": [
-        {"type": "tool-result", "toolCallId": "c2", "toolName": "bash", "output": None}]}}},
-]
+from bubble_watch.tracing import agent_span, get_tracer, setup_tracing
 
 
 @pytest.fixture
@@ -46,40 +34,139 @@ def test_agent_span_sets_terminal_status(exporter):
     assert spans["bad"].status.status_code == StatusCode.ERROR
 
 
-def test_dsh_tool_calls_pairs_calls_and_results():
-    calls = dsh_tool_calls(EVENTS)
-    assert [(c["name"], c["error"]) for c in calls] == [("web_search", False), ("bash", True)]
-    assert calls[0]["input"] == {"query": "nvda huawei"} and calls[0]["output"] == {"results": 3}
+# --- DshSpanBuilder: dsh's spans, built live from the SDK notification stream -------------------
+
+def _notification(event):
+    from types import SimpleNamespace
+    return SimpleNamespace(method="session.event", payload={"sessionId": "s1", "event": event})
 
 
-def test_annotate_result_adds_output_session_and_tool_children(exporter):
+def _call(cid, name, **extra):
+    return _notification({"type": "assistant/message", "data": {"message": {"content": [
+        {"type": "tool-call", "toolCallId": cid, "toolName": name, "input": {"q": "x"}}]}, **extra}})
+
+
+def _result(cid, name, output="done", **extra):
+    return _notification({"type": "tool/result", "data": {"message": {"content": [
+        {"type": "tool-result", "toolCallId": cid, "toolName": name, "output": output}]}, **extra}})
+
+
+def test_span_builder_opens_and_closes_a_span_per_tool_call(exporter):
+    from bubble_watch.tracing import DshSpanBuilder
     exp, tracer = exporter
-    view = AnalystView.model_validate({"score": 8, "score_delta_reasoning_ko": "r", "verdict": "TRIGGERED",
-                                       "tape_read_ko": "t", "watch_conditions_ko": "w"})
-    result = AnalystResult(agent="dsh", view=view, session_id="session-9", events=EVENTS)
-    with agent_span(tracer, "dsh analyst", input_value="brief") as span:
-        annotate_result(tracer, span, result)
-    spans = {s.name: s for s in exp.get_finished_spans()}
-    parent = spans["dsh analyst"]
-    assert parent.attributes["dsh.session_id"] == "session-9"
-    assert '"score": 8.0' in parent.attributes["output.value"]
-    tool = spans["web_search"]
-    assert tool.parent.span_id == parent.context.span_id
-    assert tool.attributes["openinference.span.kind"] == "TOOL" and tool.status.status_code == StatusCode.OK
-    assert spans["bash"].status.status_code == StatusCode.ERROR
+    builder = DshSpanBuilder(tracer)
+    builder(_call("c1", "mcp__bubble__prepare_brief"))
+    assert exp.get_finished_spans() == ()  # still running: a live span, not a post-hoc one
+    builder(_result("c1", "mcp__bubble__prepare_brief", output={"gaps": []}))
+    builder.close()
+    span = exp.get_finished_spans()[0]
+    assert span.name == "mcp__bubble__prepare_brief"
+    assert span.attributes["openinference.span.kind"] == "TOOL"
+    assert "gaps" in span.attributes["output.value"]
+    assert span.status.status_code == StatusCode.OK
 
 
-def test_dsh_tool_calls_real_event_shape():
-    # Shape captured from a live dsh run (tool-call: name/arguments; tool-result: content).
-    events = [
-        {"type": "assistant/message", "data": {"message": {"role": "assistant", "content": [
-            {"type": "tool-call", "id": "call-1", "name": "web_search",
-             "arguments": '{"queries":["NVDA news September 18 2026"]}'}]}}},
-        {"type": "tool/result", "data": {"message": {"source": {"kind": "tool", "callId": "call-1"}, "content": [
-            {"type": "tool-result", "toolCallId": "call-1",
-             "content": [{"type": "text", "text": "1. Nscale files IPO"}], "isError": False}]}}},
-    ]
-    (call,) = dsh_tool_calls(events)
-    assert call["name"] == "web_search"
-    assert call["input"] == '{"queries":["NVDA news September 18 2026"]}'
-    assert call["output"] == [{"type": "text", "text": "1. Nscale files IPO"}] and call["error"] is False
+def test_span_builder_marks_a_failed_tool_result_as_error(exporter):
+    from bubble_watch.tracing import DshSpanBuilder
+    exp, tracer = exporter
+    builder = DshSpanBuilder(tracer)
+    builder(_call("c1", "hermes_analyst"))
+    builder(_result("c1", "hermes_analyst", error={"code": "ACP_FAILED"}))
+    builder.close()
+    assert exp.get_finished_spans()[0].status.status_code == StatusCode.ERROR
+
+
+def test_span_builder_closes_an_unanswered_tool_call_on_close(exporter):
+    from bubble_watch.tracing import DshSpanBuilder
+    exp, tracer = exporter
+    builder = DshSpanBuilder(tracer)
+    builder(_call("c1", "web_search"))
+    builder.close()
+    span = exp.get_finished_spans()[0]
+    assert span.status.status_code == StatusCode.ERROR
+    assert "no result" in span.status.description
+
+
+def test_span_builder_nests_tool_spans_under_the_session_span(exporter):
+    from bubble_watch.tracing import DshSpanBuilder
+    exp, tracer = exporter
+    with agent_span(tracer, "dsh session", input_value="task") as session:
+        builder = DshSpanBuilder(tracer)
+        builder(_call("c1", "web_search"))
+        builder(_result("c1", "web_search"))
+        builder.close()
+    tool = next(s for s in exp.get_finished_spans() if s.name == "web_search")
+    assert tool.parent.span_id == session.get_span_context().span_id
+
+
+def test_span_builder_ignores_notifications_that_are_not_session_events(exporter):
+    from types import SimpleNamespace
+
+    from bubble_watch.tracing import DshSpanBuilder
+    exp, tracer = exporter
+    builder = DshSpanBuilder(tracer)
+    builder(SimpleNamespace(method="session.status", payload={"sessionId": "s1", "status": "idle"}))
+    builder.close()
+    assert exp.get_finished_spans() == ()
+
+
+def test_span_builder_counts_the_tool_calls_it_recorded(exporter):
+    from bubble_watch.tracing import DshSpanBuilder
+    _, tracer = exporter
+    builder = DshSpanBuilder(tracer)
+    builder(_call("c1", "web_search"))
+    builder(_result("c1", "web_search"))
+    builder(_call("c2", "web_fetch"))
+    builder(_result("c2", "web_fetch"))
+    builder.close()
+    assert builder.tool_call_count == 2
+
+
+# --- joining the caller's trace from a child process -------------------------------------------
+
+TRACEPARENT = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+
+
+def test_remote_parent_context_is_none_without_a_traceparent():
+    from bubble_watch.tracing import remote_parent_context
+    assert remote_parent_context({}) is None
+    assert remote_parent_context({"TRACEPARENT": ""}) is None
+
+
+def test_remote_parent_context_adopts_the_callers_trace(exporter):
+    from bubble_watch.tracing import remote_parent_context
+    exp, tracer = exporter
+    context = remote_parent_context({"TRACEPARENT": TRACEPARENT})
+    with tracer.start_as_current_span("child", context=context):
+        pass
+    span = exp.get_finished_spans()[0]
+    assert f"{span.context.trace_id:032x}" == "0af7651916cd43dd8448eb211c80319c"
+    assert f"{span.parent.span_id:016x}" == "b7ad6b7169203331"
+
+
+def test_remote_parent_context_ignores_a_malformed_traceparent():
+    from bubble_watch.tracing import remote_parent_context
+    assert remote_parent_context({"TRACEPARENT": "not-a-traceparent"}) is None
+
+
+# --- the Arize session key, stamped on every span rather than one ---------------------------------
+
+def test_session_context_stamps_every_span(exporter):
+    from bubble_watch.tracing import session_context
+    exp, tracer = exporter
+    # `with a, b, c` nests exactly as nested `with`s do: inner really is a child of outer, which
+    # is the point — a child span must inherit the key too, not just the one opened at the top.
+    with (session_context("bubble-watch-2026-09-18"),
+          agent_span(tracer, "outer", input_value="x", kind="CHAIN"),
+          agent_span(tracer, "inner", input_value="y")):
+        pass
+    ids = {s.attributes.get("session.id") for s in exp.get_finished_spans()}
+    assert ids == {"bubble-watch-2026-09-18"}
+
+
+def test_session_context_is_a_noop_without_an_id(exporter):
+    from bubble_watch.tracing import session_context
+    exp, tracer = exporter
+    with session_context(""), agent_span(tracer, "solo", input_value="x"):
+        pass
+    assert exp.get_finished_spans()[0].attributes.get("session.id") is None

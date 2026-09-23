@@ -1,27 +1,45 @@
-"""`bubble-watch` command line: seed, doctor, run."""
+"""`bubble-watch` command line.
+
+Four commands: `seed` and `doctor` as before, `run` (launch dsh as the orchestrator for one trading
+day) and `mcp` (serve the deterministic tools over stdio — this is what dsh's MCP client spawns).
+"""
 from __future__ import annotations
 
 import argparse
+import asyncio
 import datetime as dt
+import json
 import os
-import shutil
+import subprocess
 import sys
 from pathlib import Path
-from urllib.parse import urlparse
+from typing import Any
 from zoneinfo import ZoneInfo
 
 import httpx
+from opentelemetry import context
 
-from .agents.dsh_client import DshAnalyst, ensure_dsh_home, make_harness_factory
-from .agents.hermes_cli import HermesCliAnalyst, ensure_hermes_home, hermes_env
-from .agents.hermes_client import HermesAnalyst
-from .config import DEFAULT_MODEL, Settings, load_settings, missing_required, resolve_hermes_key
-from .graph import Deps, build_graph
+from .config import Settings, load_settings, missing_required
+from .harness import (
+    ensure_dsh_home,
+    install_profile_plugins,
+    install_skill,
+    make_harness_factory,
+    missing_profile_plugins,
+)
 from .market_data.alphavantage import AlphaVantageProvider
 from .market_data.yfinance_provider import YFinanceProvider
+from .mcp_server import build_hermes_server, build_server
+from .mcp_tools import ToolDeps, prepare_brief
+from .orchestrator import OrchestratorError, run_day
 from .state_store import load_state, save_state, seed_state
-from .tracing import get_tracer, setup_tracing, shutdown_tracing
-from .writer import XaiWriter
+from .tracing import (
+    get_tracer,
+    remote_parent_context,
+    session_context,
+    setup_tracing,
+    shutdown_tracing,
+)
 
 NY = ZoneInfo("America/New_York")
 CLOSE_BUFFER = dt.time(16, 30)
@@ -36,73 +54,14 @@ def default_day(now: dt.datetime | None = None) -> dt.date:
     return day
 
 
-def _state_path(settings: Settings):
+def state_path(settings: Settings) -> Path:
     return settings.state_dir / "NVDA.json"
 
 
-def doctor_checks(settings: Settings, client: httpx.Client) -> list[tuple[str, bool, bool, str]]:
-    checks: list[tuple[str, bool, bool, str]] = []
-    missing = set(missing_required(settings))
-    checks.append(("env XAI_API_KEY", "XAI_API_KEY" not in missing, True,
-                   "set" if "XAI_API_KEY" not in missing else "missing in .env"))
-    for name, value, why in (("ARIZE_SPACE_ID", settings.arize_space_id, "tracing"),
-                             ("ARIZE_API_KEY", settings.arize_api_key, "tracing"),
-                             ("TAVILY_API_KEY", settings.tavily_api_key, "web search for both analysts"),
-                             ("EXA_API_KEY", settings.exa_api_key, "web search fallback"),
-                             ("ALPHAVANTAGE_API_KEY", settings.alphavantage_api_key, "primary market data (EOD closes + options)")):
-        checks.append((f"env {name}", bool(value), False, f"set ({why})" if value else f"not set — {why} unavailable"))
-    state = _state_path(settings)
-    checks.append(("state file", state.exists(), True, str(state) if state.exists() else "run `bubble-watch seed`"))
-    dsh_ok = os.access(settings.dsh_bin, os.X_OK)
-    checks.append(("dsh launcher", dsh_ok, True, settings.dsh_bin))
-    home = ensure_dsh_home(settings.dsh_home, settings.dsh_model, settings.dsh_provider, settings.xai_base_url)
-    checks.append(("dsh home", True, True, str(home)))
-
-    if settings.xai_api_key:
-        try:
-            r = client.get(settings.xai_base_url.rstrip("/") + "/models",
-                           headers={"Authorization": f"Bearer {settings.xai_api_key}"})
-            ids = {m.get("id") for m in r.json().get("data", [])} if r.status_code == 200 else set()
-            for model in sorted({settings.dsh_model, settings.writer_model}):
-                detail = "served" if model in ids else (
-                    f"HTTP {r.status_code}" if r.status_code != 200 else
-                    f"not served; grok models: {', '.join(sorted(i for i in ids if i and 'grok' in i))}")
-                checks.append((f"xAI model {model}", model in ids, True, detail))
-        except httpx.HTTPError as exc:
-            checks.append(("xAI API", False, True, f"unreachable: {type(exc).__name__}"))
-    if settings.hermes_mode != "gateway":
-        path = shutil.which(settings.hermes_bin)
-        checks.append(("Hermes CLI (oneshot)", path is not None, True, path or f"{settings.hermes_bin} not on PATH"))
-        return checks
-    try:
-        r = client.get(settings.hermes_api_url.rstrip("/") + "/models",
-                       headers={"Authorization": f"Bearer {resolve_hermes_key(settings)}"})
-        checks.append(("Hermes gateway", r.status_code == 200, True,
-                       settings.hermes_api_url if r.status_code == 200 else f"HTTP {r.status_code} (gateway started with a different key? restart it)"))
-    except httpx.HTTPError:
-        checks.append(("Hermes gateway", False, True,
-                       f"not reachable at {settings.hermes_api_url} — start it with `uv run bubble-watch hermes-gateway`"))
-    return checks
-
-
-
-
-
-def hermes_gateway_env(settings: Settings, home: Path) -> dict[str, str]:
-    """hermes_env plus the API server (for HERMES_MODE=gateway)."""
-    return {**hermes_env(settings, home), "API_SERVER_ENABLED": "true", "API_SERVER_KEY": resolve_hermes_key(settings),
-            "API_SERVER_PORT": str(urlparse(settings.hermes_api_url).port or 8642)}
-
-
-def cmd_hermes_gateway(args, settings: Settings) -> int:
-    missing = missing_required(settings)
-    if missing:
-        print(f"missing required settings: {', '.join(missing)} (set them in .env)")
-        return 1
-    home = ensure_hermes_home(settings.hermes_home, DEFAULT_MODEL)
-    print(f"starting Hermes analyst gateway (HERMES_HOME={home}, API server only) at {settings.hermes_api_url}")
-    os.execvpe("hermes", ["hermes", "gateway", "run"], hermes_gateway_env(settings, home))
-    return 0  # unreachable: execvpe replaces the process
+def report_path_for(settings: Settings, day: dt.date) -> Path:
+    """Where dsh is told to write the day's report; the driver verifies this exact path afterwards."""
+    ticker = load_state(state_path(settings)).ticker if state_path(settings).exists() else "NVDA"
+    return settings.reports_dir / f"{day}-{ticker}.md"
 
 
 def market_provider(settings: Settings):
@@ -113,27 +72,76 @@ def market_provider(settings: Settings):
     return YFinanceProvider()
 
 
-def hermes_analyst(settings: Settings):
-    if settings.hermes_mode == "gateway":
-        return HermesAnalyst(settings.hermes_api_url, resolve_hermes_key(settings), model=settings.hermes_model,
-                             timeout=settings.analyst_timeout_s)
-    home = ensure_hermes_home(settings.hermes_home, DEFAULT_MODEL)
-    return HermesCliAnalyst(model=settings.hermes_model or DEFAULT_MODEL, env=hermes_env(settings, home),
-                            timeout=settings.analyst_timeout_s, hermes_bin=settings.hermes_bin, workdir=home)
+def tool_deps(settings: Settings, provider: Any = None) -> ToolDeps:
+    return ToolDeps(market=market_provider(settings), state_path=state_path(settings),
+                    tracer=get_tracer(provider))
 
 
-def build_deps(settings: Settings, tracer, *, agents: bool, save: bool) -> Deps:
-    hermes = hermes_analyst(settings) if agents else None
-    analysts = {"hermes": hermes, "dsh": DshAnalyst(make_harness_factory(settings))} if agents else {}
-    return Deps(
-        market=market_provider(settings), analysts=analysts,
-        writer=XaiWriter(settings.xai_api_key, settings.writer_model, settings.xai_base_url) if agents else None,
-        tracer=tracer, reports_dir=settings.reports_dir, state_path=_state_path(settings), gap_filler=hermes,
-        save=save)
+def serve_stdio(server) -> int:
+    asyncio.run(server.run_stdio_async())
+    return 0
+
+
+HERMES_HINT = ("hermes cannot start — in $HERMES_REPO run: uv sync && uv pip install arize-otel")
+
+
+def doctor_checks(settings: Settings, client: httpx.Client,
+                  runner: Any = subprocess.run) -> list[tuple[str, bool, bool, str]]:
+    checks: list[tuple[str, bool, bool, str]] = []
+    missing = set(missing_required(settings))
+    checks.append(("env XAI_API_KEY", "XAI_API_KEY" not in missing, True,
+                   "set" if "XAI_API_KEY" not in missing else "missing in .env"))
+    for name, value, why in (("ARIZE_SPACE_ID", settings.arize_space_id, "tracing"),
+                             ("ARIZE_API_KEY", settings.arize_api_key, "tracing"),
+                             ("ALPHAVANTAGE_API_KEY", settings.alphavantage_api_key,
+                              "primary market data (EOD closes + options)")):
+        checks.append((f"env {name}", bool(value), False, f"set ({why})" if value else f"not set — {why} unavailable"))
+    # Not optional in practice: with neither key, dsh falls back to a backend it has no
+    # credentials for. The call fails after ~147s on every run, and both analysts then research by
+    # fetching pages one at a time instead of searching.
+    search = settings.tavily_api_key or settings.exa_api_key
+    checks.append(("web search backend", bool(search), True,
+                   "Tavily" if settings.tavily_api_key else "Exa" if search else
+                   "none — set TAVILY_API_KEY (or EXA_API_KEY); without it every run wastes "
+                   "~147s on a search that cannot succeed"))
+    state = state_path(settings)
+    checks.append(("state file", state.exists(), True, str(state) if state.exists() else "run `bubble-watch seed`"))
+    checks.append(("dsh launcher", os.access(settings.dsh_bin, os.X_OK), True, settings.dsh_bin))
+    home = ensure_dsh_home(settings.dsh_home, settings.dsh_model, settings.dsh_provider, settings.xai_base_url)
+    checks.append(("dsh home", True, True, str(home)))
+    hermes_ok = os.access(settings.hermes_bin, os.X_OK)
+    checks.append(("Hermes launcher", hermes_ok, True,
+                   settings.hermes_bin if hermes_ok else f"{settings.hermes_bin} not executable"))
+    skill = install_skill(settings)
+    checks.append(("bubble-watch skill", skill.exists(), True, str(skill)))
+    if hermes_ok:
+        # `hermes --version` proves the checkout's venv imports: the one failure that otherwise
+        # surfaces only mid-run, as an analyst call that exits non-zero.
+        probe = runner([settings.hermes_bin, "--version"], capture_output=True, text=True,
+                       check=False, env={**os.environ, "HERMES_HOME": str(settings.hermes_home)})
+        ok = probe.returncode == 0
+        checks.append(("Hermes runtime", ok, True, "runs" if ok else HERMES_HINT))
+    missing = missing_profile_plugins(settings)
+    checks.append(("dsh profile plugins", not missing, True,
+                   "installed" if not missing
+                   else f"missing {', '.join(missing)} — run `bubble-watch install-plugins`"))
+
+    if settings.xai_api_key:
+        try:
+            r = client.get(settings.xai_base_url.rstrip("/") + "/models",
+                           headers={"Authorization": f"Bearer {settings.xai_api_key}"})
+            ids = {m.get("id") for m in r.json().get("data", [])} if r.status_code == 200 else set()
+            detail = "served" if settings.dsh_model in ids else (
+                f"HTTP {r.status_code}" if r.status_code != 200 else
+                f"not served; grok models: {', '.join(sorted(i for i in ids if i and 'grok' in i))}")
+            checks.append((f"xAI model {settings.dsh_model}", settings.dsh_model in ids, True, detail))
+        except httpx.HTTPError as exc:
+            checks.append(("xAI API", False, True, f"unreachable: {type(exc).__name__}"))
+    return checks
 
 
 def cmd_seed(args, settings: Settings) -> int:
-    path = _state_path(settings)
+    path = state_path(settings)
     if path.exists() and not args.force:
         print(f"{path} exists; pass --force to overwrite")
         return 1
@@ -150,36 +158,99 @@ def cmd_doctor(args, settings: Settings) -> int:
     return 0 if all(ok for _, ok, required, _ in checks if required) else 1
 
 
+def cmd_install_plugins(args, settings: Settings) -> int:
+    """Install the dsh plugins the orchestration composition needs but the base bundle lacks.
+
+    A separate command because it needs pnpm and the network; a run never does this implicitly.
+    """
+    ensure_dsh_home(settings.dsh_home, settings.dsh_model, settings.dsh_provider, settings.xai_base_url)
+    try:
+        installed = install_profile_plugins(settings)
+    except RuntimeError as exc:
+        print(f"{exc}")
+        return 1
+    for name in installed:
+        print(f"installed {name}")
+    if not installed:
+        print("already installed")
+    return 0
+
+
+def cmd_mcp(args, settings: Settings) -> int:
+    """Serve the deterministic tools on stdio. dsh's MCP client spawns this; stdout is the transport.
+
+    Tracing is set up here too: this process owns the LangGraph spans, and joins the run's trace
+    through the TRACEPARENT the orchestration patch passes down.
+    """
+    provider = setup_tracing(settings)
+    parent = remote_parent_context()
+    token = context.attach(parent) if parent is not None else None
+    try:
+        # The grouping key is handed over by the driver: a different process cannot derive it.
+        with session_context(os.environ.get("BUBBLE_WATCH_SESSION_ID", "")):
+            return serve_stdio(build_server(tool_deps(settings, provider)))
+    finally:
+        if token is not None:
+            context.detach(token)
+        shutdown_tracing(provider)
+
+
+def cmd_hermes_mcp(args, settings: Settings) -> int:
+    """Serve the Hermes analyst on stdio, as its own MCP server.
+
+    Separate from `mcp` so each runtime is one hop from the orchestrator and can be its own
+    container; the deterministic tool server then never spawns a sibling and needs no Docker socket.
+    """
+    provider = setup_tracing(settings)
+    parent = remote_parent_context()
+    token = context.attach(parent) if parent is not None else None
+    try:
+        with session_context(os.environ.get("BUBBLE_WATCH_SESSION_ID", "")):
+            return serve_stdio(build_hermes_server(tool_deps(settings, provider)))
+    finally:
+        if token is not None:
+            context.detach(token)
+        shutdown_tracing(provider)
+
+
+def _run_without_agents(settings: Settings, day: dt.date) -> int:
+    """Data and signals only: the MCP tools called directly, with no dsh and no LLM anywhere."""
+    print(json.dumps(prepare_brief(tool_deps(settings), day.isoformat()), indent=2, ensure_ascii=False))
+    return 0
+
+
 def cmd_run(args, settings: Settings) -> int:
-    path = _state_path(settings)
+    path = state_path(settings)
     if not path.exists():
         print("no state file; run `bubble-watch seed` first")
         return 1
-    agents = not args.no_agents
-    if agents and (missing := missing_required(settings)):
+    day = args.date or default_day()
+    if args.no_agents:
+        return _run_without_agents(settings, day)
+    if missing := missing_required(settings):
         print(f"missing required settings: {', '.join(missing)} (set them in .env)")
         return 1
-    day = args.date or default_day()
-    provider = setup_tracing(settings)
-    deps = build_deps(settings, get_tracer(provider), agents=agents, save=agents and not args.dry_run)
-    try:
-        from openinference.instrumentation import using_session
 
-        with using_session(f"bubble-watch-{day}"):
-            final = build_graph(deps).invoke({"day": day, "watch": load_state(path)})
+    report_path = report_path_for(settings, day)
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    backup = path.read_bytes() if args.dry_run else None
+    provider = setup_tracing(settings)
+    try:
+        outcome = run_day(
+            day=day, report_path=report_path, tracer=get_tracer(provider),
+            harness_for=lambda traceparent, session_id: make_harness_factory(
+                settings, traceparent, session_id)())
+    except OrchestratorError as exc:
+        print(f"run failed: {exc}")
+        return 1
     finally:
-        for analyst in deps.analysts.values():
-            if hasattr(analyst, "close"):
-                analyst.close()
+        if backup is not None:
+            path.write_bytes(backup)  # --dry-run: dsh saved state itself, so undo it
         shutdown_tracing(provider)
-    if not agents:
-        print(final["record"].signals.model_dump_json(indent=2))
-    else:
-        recon = final["reconciliation"]
-        print(f"report: {final['report_path']}")
-        print(f"score {recon.score} ({recon.mode}), verdict {recon.verdict.value}")
-    for note in final.get("notes") or []:
-        print(f"note: {note}")
+    print(f"report: {outcome.report_path}")
+    print(f"dsh session {outcome.session_id}, {outcome.tool_call_count} tool calls")
+    if args.dry_run:
+        print("dry run: state file restored")
     return 0
 
 
@@ -188,15 +259,18 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="cmd", required=True)
     seed = sub.add_parser("seed", help="write the initial state from the 9/11–9/17 reports")
     seed.add_argument("--force", action="store_true")
-    sub.add_parser("doctor", help="check keys (names only), dsh, xAI model and Hermes gateway")
-    run = sub.add_parser("run", help="run the pipeline for one trading day")
+    sub.add_parser("doctor", help="check keys (names only), dsh, the Hermes ACP launcher and the xAI model")
+    run = sub.add_parser("run", help="run one trading day with dsh as the orchestrator")
     run.add_argument("--date", type=dt.date.fromisoformat, help="YYYY-MM-DD (default: last closed session)")
-    run.add_argument("--dry-run", action="store_true", help="write the report but do not save state")
-    run.add_argument("--no-agents", action="store_true", help="data + signals only; no LLM calls")
-    sub.add_parser("hermes-gateway", help="run the Hermes analyst gateway (isolated home, API server only)")
+    run.add_argument("--dry-run", action="store_true", help="write the report but restore the state file")
+    run.add_argument("--no-agents", action="store_true", help="data + signals only; no dsh, no LLM calls")
+    sub.add_parser("mcp", help="serve the deterministic tools over MCP stdio (dsh spawns this)")
+    sub.add_parser("hermes-mcp", help="serve the Hermes analyst over MCP stdio (dsh spawns this)")
+    sub.add_parser("install-plugins", help="install the dsh plugins the base bundle lacks (needs pnpm)")
     args = parser.parse_args(argv)
     settings = load_settings()
-    commands = {"seed": cmd_seed, "doctor": cmd_doctor, "run": cmd_run, "hermes-gateway": cmd_hermes_gateway}
+    commands = {"seed": cmd_seed, "doctor": cmd_doctor, "run": cmd_run, "mcp": cmd_mcp,
+                "hermes-mcp": cmd_hermes_mcp, "install-plugins": cmd_install_plugins}
     return commands[args.cmd](args, settings)
 
 

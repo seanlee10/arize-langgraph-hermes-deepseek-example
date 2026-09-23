@@ -6,11 +6,13 @@ authors = [
     { name = "Sean Lee", email = "yihsean@gmail.com" }
 ]
 requires-python = ">=3.11"
+# Everything the MCP tool server needs. The dsh SDK is deliberately NOT here: the tool server is
+# its own deployable and must not depend on the orchestrator that calls it (see the `driver` group).
 dependencies = [
     "arize-otel>=0.13.0",
-    "deepseek-harness-sdk",
     "httpx>=0.28.1",
     "langgraph>=1.2.11",
+    "mcp>=2.0.0",
     "openinference-instrumentation-langchain>=0.1.76",
     "pydantic>=2.13.5",
     "python-dotenv>=1.2.3",
@@ -26,6 +28,14 @@ dev = [
     "pytest>=9.1.1",
     "ruff>=0.16.8",
 ]
+# The driver side only: launching and talking to dsh. `uv sync --no-default-groups` gives the
+# tool-server image an environment without it.
+driver = [
+    "deepseek-harness-sdk",
+]
+
+[tool.uv]
+default-groups = ["dev", "driver"]
 
 [tool.uv.sources]
 deepseek-harness-sdk = { path = "/Users/sean/projects/deepseek-harness/python/sdk", editable = true }
@@ -40,6 +50,6 @@ testpaths = ["tests"]
 line-length = 120
 
 [tool.ruff.lint.per-file-ignores]
-# Fail-open by design: a failed analyst, data provider or writer degrades the run
-# (recorded as a note in the report) instead of aborting it.
-"src/bubble_watch/graph.py" = ["BLE001"]
+# Fail-open by design: a dead market-data provider degrades the day to "everything is a gap"
+# (recorded as a note dsh must disclose) instead of aborting the run.
+"src/bubble_watch/brief_graph.py" = ["BLE001"]

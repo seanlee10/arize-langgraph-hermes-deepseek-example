@@ -9,3 +9,5 @@ reports/
 !docs/
 state/
 .hermes-analyst/
+# Design notes kept in the working tree but deliberately never committed.
+/local/

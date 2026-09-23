@@ -1,0 +1,23 @@
+# The deterministic half of the run: market data, LangGraph signal computation, gaps, persistence.
+# Speaks MCP over stdio, so dsh reaches it with `docker run -i` and the protocol is unchanged.
+# Build from the bubble-watch repo root:
+#   docker build -f docker/Dockerfile.mcp-tools -t bubble-watch/mcp-tools .
+FROM python:3.13-slim
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+WORKDIR /work
+ENV UV_LINK_MODE=copy \
+    UV_COMPILE_BYTECODE=1 \
+    UV_PROJECT_ENVIRONMENT=/opt/venv \
+    PATH=/opt/venv/bin:$PATH
+
+# Dependencies first so a source edit does not re-resolve the lock.
+COPY pyproject.toml uv.lock README.md ./
+COPY src ./src
+# --no-default-groups: no dev tooling, and no dsh SDK (that is the driver's dependency).
+RUN uv sync --frozen --no-default-groups
+
+# state/ and reports/ arrive as mounts at run time; the image carries no run data.
+# stdout is the JSON-RPC transport — nothing else may write to it.
+ENTRYPOINT ["bubble-watch", "mcp"]
