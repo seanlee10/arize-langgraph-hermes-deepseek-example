@@ -9,8 +9,8 @@ DSH_REPO="${DSH_REPO:-$HOME/projects/deepseek-harness}"
 echo "==> bubble-watch/mcp-tools   (context: $ROOT)"
 docker build -f "$ROOT/docker/Dockerfile.mcp-tools" -t bubble-watch/mcp-tools "$ROOT"
 
-echo "==> bubble-watch/hermes-acp  (context: $HERMES_REPO)"
-docker build -f "$ROOT/docker/Dockerfile.hermes-acp" -t bubble-watch/hermes-acp "$HERMES_REPO"
+echo "==> bubble-watch/hermes      (context: $HERMES_REPO)"
+docker build -f "$ROOT/docker/Dockerfile.hermes" -t bubble-watch/hermes "$HERMES_REPO"
 
 echo "==> bubble-watch/dsh-runner  (context: $DSH_REPO)"
 docker build -f "$ROOT/docker/Dockerfile.dsh-runner" -t bubble-watch/dsh-runner "$DSH_REPO"

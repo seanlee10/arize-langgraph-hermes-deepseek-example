@@ -147,3 +147,26 @@ def test_remote_parent_context_adopts_the_callers_trace(exporter):
 def test_remote_parent_context_ignores_a_malformed_traceparent():
     from bubble_watch.tracing import remote_parent_context
     assert remote_parent_context({"TRACEPARENT": "not-a-traceparent"}) is None
+
+
+# --- the Arize session key, stamped on every span rather than one ---------------------------------
+
+def test_session_context_stamps_every_span(exporter):
+    from bubble_watch.tracing import session_context
+    exp, tracer = exporter
+    # `with a, b, c` nests exactly as nested `with`s do: inner really is a child of outer, which
+    # is the point — a child span must inherit the key too, not just the one opened at the top.
+    with (session_context("bubble-watch-2026-09-18"),
+          agent_span(tracer, "outer", input_value="x", kind="CHAIN"),
+          agent_span(tracer, "inner", input_value="y")):
+        pass
+    ids = {s.attributes.get("session.id") for s in exp.get_finished_spans()}
+    assert ids == {"bubble-watch-2026-09-18"}
+
+
+def test_session_context_is_a_noop_without_an_id(exporter):
+    from bubble_watch.tracing import session_context
+    exp, tracer = exporter
+    with session_context(""), agent_span(tracer, "solo", input_value="x"):
+        pass
+    assert exp.get_finished_spans()[0].attributes.get("session.id") is None

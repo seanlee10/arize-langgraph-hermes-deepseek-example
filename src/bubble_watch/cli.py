@@ -33,7 +33,13 @@ from .mcp_server import build_server
 from .mcp_tools import ToolDeps, prepare_brief
 from .orchestrator import OrchestratorError, run_day
 from .state_store import load_state, save_state, seed_state
-from .tracing import get_tracer, remote_parent_context, setup_tracing, shutdown_tracing
+from .tracing import (
+    get_tracer,
+    remote_parent_context,
+    session_context,
+    setup_tracing,
+    shutdown_tracing,
+)
 
 NY = ZoneInfo("America/New_York")
 CLOSE_BUFFER = dt.time(16, 30)
@@ -75,8 +81,7 @@ def serve_stdio(server) -> int:
     return 0
 
 
-ACP_HINT = ("hermes-acp cannot start — in $HERMES_REPO run: "
-            "uv pip install 'agent-client-protocol==0.9.0' arize-otel")
+HERMES_HINT = ("hermes cannot start — in $HERMES_REPO run: uv sync && uv pip install arize-otel")
 
 
 def doctor_checks(settings: Settings, client: httpx.Client,
@@ -97,18 +102,18 @@ def doctor_checks(settings: Settings, client: httpx.Client,
     checks.append(("dsh launcher", os.access(settings.dsh_bin, os.X_OK), True, settings.dsh_bin))
     home = ensure_dsh_home(settings.dsh_home, settings.dsh_model, settings.dsh_provider, settings.xai_base_url)
     checks.append(("dsh home", True, True, str(home)))
-    acp_ok = os.access(settings.hermes_acp_bin, os.X_OK)
-    checks.append(("Hermes ACP launcher", acp_ok, True,
-                   settings.hermes_acp_bin if acp_ok else f"{settings.hermes_acp_bin} not executable"))
+    hermes_ok = os.access(settings.hermes_bin, os.X_OK)
+    checks.append(("Hermes launcher", hermes_ok, True,
+                   settings.hermes_bin if hermes_ok else f"{settings.hermes_bin} not executable"))
     skill = install_skill(settings)
     checks.append(("bubble-watch skill", skill.exists(), True, str(skill)))
-    if os.access(settings.hermes_acp_bin, os.X_OK):
-        # `hermes-acp --check` imports the adapter and its protocol package: the one failure that
-        # otherwise surfaces only mid-run, as a delegation that exits 1 at ACP initialize.
-        probe = runner([settings.hermes_acp_bin, "--check"], capture_output=True, text=True,
+    if hermes_ok:
+        # `hermes --version` proves the checkout's venv imports: the one failure that otherwise
+        # surfaces only mid-run, as an analyst call that exits non-zero.
+        probe = runner([settings.hermes_bin, "--version"], capture_output=True, text=True,
                        check=False, env={**os.environ, "HERMES_HOME": str(settings.hermes_home)})
         ok = probe.returncode == 0
-        checks.append(("Hermes ACP runtime", ok, True, "check OK" if ok else ACP_HINT))
+        checks.append(("Hermes runtime", ok, True, "runs" if ok else HERMES_HINT))
     missing = missing_profile_plugins(settings)
     checks.append(("dsh profile plugins", not missing, True,
                    "installed" if not missing
@@ -174,7 +179,9 @@ def cmd_mcp(args, settings: Settings) -> int:
     parent = remote_parent_context()
     token = context.attach(parent) if parent is not None else None
     try:
-        return serve_stdio(build_server(tool_deps(settings)))
+        # The grouping key is handed over by the driver: a different process cannot derive it.
+        with session_context(os.environ.get("BUBBLE_WATCH_SESSION_ID", "")):
+            return serve_stdio(build_server(tool_deps(settings)))
     finally:
         if token is not None:
             context.detach(token)
@@ -204,8 +211,10 @@ def cmd_run(args, settings: Settings) -> int:
     backup = path.read_bytes() if args.dry_run else None
     provider = setup_tracing(settings)
     try:
-        outcome = run_day(day=day, report_path=report_path, tracer=get_tracer(provider),
-                          harness_for=lambda traceparent: make_harness_factory(settings, traceparent)())
+        outcome = run_day(
+            day=day, report_path=report_path, tracer=get_tracer(provider),
+            harness_for=lambda traceparent, session_id: make_harness_factory(
+                settings, traceparent, session_id)())
     except OrchestratorError as exc:
         print(f"run failed: {exc}")
         return 1

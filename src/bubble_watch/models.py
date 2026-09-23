@@ -78,6 +78,8 @@ class DailyRecord(BaseModel):
     score_delta: float | None = None
     verdict: Verdict | None = None
     report_path: str | None = None
+    #: The Arize trace this run produced, so a stored record leads back to its observability data.
+    trace_id: str | None = None
     note: str = ""
 
 

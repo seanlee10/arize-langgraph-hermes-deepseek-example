@@ -16,7 +16,7 @@ from typing import Any
 from opentelemetry import trace
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
-from .tracing import OUTPUT, DshSpanBuilder, agent_span
+from .tracing import OUTPUT, DshSpanBuilder, agent_span, session_context
 
 # dsh's own vocabulary for "the model stopped because it was finished".
 COMPLETED = frozenset({"stop", "end_turn", "completed", "tool_calls", ""})
@@ -36,19 +36,33 @@ class RunOutcome:
 
 
 def build_task(day: dt.date, report_path: Path) -> str:
-    """What dsh is asked to do. The procedure itself lives in the `bubble-watch` skill."""
-    return f"""오늘({day})의 NVDA Bubble Signal Watch 리포트를 작성하라.
+    """What dsh is asked to do. The procedure itself lives in the `bubble-watch` skill.
 
-`skill` 도구로 `bubble-watch` 스킬을 먼저 읽고, 거기 적힌 절차를 그대로 따른다.
+    English, like every other prompt here: this text is the root span's input, and the people
+    reading these traces do not read Korean. Only the report is Korean — it is the product.
+    """
+    return f"""Produce today's ({day}) NVDA Bubble Signal Watch report.
 
-- 대상 날짜: {day}
-- 리포트 파일: {report_path}
+First read the `bubble-watch` skill with the `skill` tool, then follow the procedure it describes.
 
-규칙:
-- 모든 수치는 `mcp__bubble__*` 도구가 돌려준 계산값만 사용한다. 직접 계산하거나 지어내지 않는다.
-- 웹 리서치와 결측값 조사는 `hermes_analyst` 서브에이전트에 위임하고, 너는 독립적으로 자신의 판단을 세운 뒤
-  두 견해를 비교·조정한다.
-- 마지막에 위 경로에 한국어 리포트를 쓰고 `mcp__bubble__save_run`으로 결과를 저장한다."""
+- Target date: {day}
+- Report file: {report_path}
+
+Rules:
+- Every figure must come from an `mcp__bubble__*` tool. Never compute or recall a number yourself.
+- Delegate web research and missing-value lookups to `mcp__bubble__hermes_analyst`, form your own
+  independent view, then reconcile the two.
+- Write the report in KOREAN to the path above, then record the result with
+  `mcp__bubble__save_run`.
+"""
+
+
+def _start_harness(harness_for: Any, traceparent: str, session_id: str) -> Any:
+    """Call the factory, tolerating the one-argument form used by tests and older callers."""
+    try:
+        return harness_for(traceparent, session_id)
+    except TypeError:
+        return harness_for(traceparent)
 
 
 def _traceparent() -> str:
@@ -68,7 +82,8 @@ def session_ids(day: dt.date) -> tuple[str, str]:
     return f"{grouping}-{uuid.uuid4().hex[:8]}", grouping
 
 
-def run_day(*, day: dt.date, report_path: Path, harness_for: Callable[[str], Any],
+def run_day(*, day: dt.date, report_path: Path,
+            harness_for: Callable[[str, str], Any] | Callable[[str], Any],
             tracer: trace.Tracer) -> RunOutcome:
     """Run one day through dsh and return the verified outcome.
 
@@ -77,13 +92,14 @@ def run_day(*, day: dt.date, report_path: Path, harness_for: Callable[[str], Any
     """
     task = build_task(day, report_path)
     dsh_session, grouping = session_ids(day)
-    with agent_span(tracer, "bubble-watch run", input_value=task, kind="CHAIN",
-                    attributes={"bubble_watch.date": day.isoformat()}) as root:
-        harness = harness_for(_traceparent())
+    with session_context(grouping), agent_span(
+            tracer, "bubble-watch run", input_value=task, kind="CHAIN",
+            attributes={"bubble_watch.date": day.isoformat()}) as root:
+        harness = _start_harness(harness_for, _traceparent(), grouping)
         builder = DshSpanBuilder(tracer)
         try:
             with agent_span(tracer, "dsh session", input_value=task,
-                            attributes={"session.id": grouping, "dsh.session_id": dsh_session}) as session:
+                            attributes={"dsh.session_id": dsh_session}) as session:
                 try:
                     result = harness.run(task, session_id=dsh_session, on_notification=builder)
                 finally:

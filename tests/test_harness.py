@@ -16,18 +16,15 @@ def _settings(tmp_path, monkeypatch, **env):
     return load_settings(tmp_path / "none.env")
 
 
-def test_orchestrator_patch_registers_hermes_as_an_acp_subagent(tmp_path, monkeypatch):
-    settings = _settings(tmp_path, monkeypatch)
-    text = Path(render_orchestrator_patch(settings)).read_text()
-    assert "name: '@deepseek-ai/dsh-subagent-acp'" in text
-    assert "providerName: hermes" in text
-    assert str(PROJECT_ROOT / "bin" / "hermes-acp") in text
-    assert str(tmp_path / "hermes-home") in text
-    assert "toolName: hermes_analyst" in text
-    # an ACP child advertises no depthLimit capability, so any numeric cap (and the host default
-    # a missing key falls back to) is rejected at load; only 'provider-managed' composes.
-    assert "maxDepth: provider-managed" in text
-    assert "maxDepth: 0" not in text
+def test_orchestrator_patch_has_one_child_not_a_subagent(tmp_path, monkeypatch):
+    """Hermes is reached through the tool server, not through dsh's ACP subagent backend: its ACP
+    adapter fires no plugin hooks, so it would not trace itself. See hermes_tool.py."""
+    text = Path(render_orchestrator_patch(_settings(tmp_path, monkeypatch))).read_text()
+    rows = [line for line in text.splitlines() if not line.lstrip().startswith("#")]
+    body = "\n".join(rows)
+    assert "subagent" not in body        # the comment explains why; the composition has none
+    assert "hermes-acp" not in body
+    assert body.count("- id:") == 1
 
 
 def test_orchestrator_patch_mounts_the_bubble_watch_mcp_server(tmp_path, monkeypatch):
@@ -40,13 +37,11 @@ def test_orchestrator_patch_mounts_the_bubble_watch_mcp_server(tmp_path, monkeyp
     assert "failOnStartupError: true" in text
 
 
-def test_orchestrator_patch_passes_a_traceparent_to_both_children(tmp_path, monkeypatch):
+def test_orchestrator_patch_passes_the_traceparent_to_its_one_child(tmp_path, monkeypatch):
     settings = _settings(tmp_path, monkeypatch, XAI_API_KEY="k")
     text = Path(render_orchestrator_patch(settings, traceparent="00-a-b-01")).read_text()
-    # one each, under the name that child actually reads (see the test further down)
     declared = [k for k, _ in re.findall(r"^\s+(\w+): !!js process\.env\.(\w+)$", text, re.MULTILINE)]
-    assert sorted(v for v in declared if v.endswith("TRACEPARENT")) == [
-        "HERMES_ARIZE_TRACEPARENT", "TRACEPARENT"]
+    assert [v for v in declared if v.endswith("TRACEPARENT")] == ["TRACEPARENT"]
 
 
 def test_orchestrator_patch_is_written_inside_dsh_home(tmp_path, monkeypatch):
@@ -102,27 +97,27 @@ def test_skill_tells_dsh_to_delegate_research_and_never_compute():
     assert "mcp__bubble__save_run" in source
 
 
-def test_hermes_acp_launcher_is_executable():
+def test_hermes_launcher_is_executable():
     import os
-    launcher = PROJECT_ROOT / "bin" / "hermes-acp"
+    launcher = PROJECT_ROOT / "bin" / "hermes"
     assert launcher.exists()
     assert os.access(launcher, os.X_OK)
 
 
-# --- the Hermes ACP child's isolated home and environment --------------------------------------
+# --- the Hermes analyst's isolated home and the dsh child environment ---------------------------
 
 def test_ensure_hermes_home_configures_a_web_only_grok_analyst(tmp_path):
-    from bubble_watch.harness import ensure_hermes_home
+    from bubble_watch.hermes_tool import ensure_hermes_home
     home = ensure_hermes_home(tmp_path / "hh", "grok-4.6")
     cfg = (home / "config.yaml").read_text()
     assert "default: grok-4.6" in cfg and "provider: xai" in cfg
-    assert "acp: [web]" in cfg          # dsh drives Hermes over ACP: that surface is web-only too
+    assert "cli: [web]" in cfg          # research only; the CLI surface is the one we drive
     assert "tirith_enabled: false" in cfg
     assert "observability/arize" in cfg
 
 
 def test_ensure_hermes_home_never_overwrites_an_existing_config(tmp_path):
-    from bubble_watch.harness import ensure_hermes_home
+    from bubble_watch.hermes_tool import ensure_hermes_home
     home = ensure_hermes_home(tmp_path / "hh", "grok-4.6")
     (home / "config.yaml").write_text("custom: true\n")
     assert (ensure_hermes_home(tmp_path / "hh", "grok-4.6") / "config.yaml").read_text() == "custom: true\n"
@@ -138,33 +133,34 @@ def test_child_env_strips_messaging_credentials(tmp_path, monkeypatch):
     assert env["XAI_API_KEY"] == "xai-k"
 
 
-def test_child_env_carries_the_traceparent_under_both_names(tmp_path, monkeypatch):
+def test_child_env_carries_the_run_traceparent(tmp_path, monkeypatch):
+    """Only the OTel name: the tool server opens a per-call span for Hermes and derives
+    HERMES_ARIZE_TRACEPARENT from that, so Hermes nests under the call, not the run root."""
     from bubble_watch.harness import child_env
     settings = _settings(tmp_path, monkeypatch, XAI_API_KEY="xai-k")
     env = child_env(settings, "00-abc-def-01")
-    assert env["TRACEPARENT"] == "00-abc-def-01"          # the MCP server (LangGraph) reads this
-    assert env["HERMES_ARIZE_TRACEPARENT"] == "00-abc-def-01"  # Hermes' arize plugin reads this
+    assert env["TRACEPARENT"] == "00-abc-def-01"
+    assert "HERMES_ARIZE_TRACEPARENT" not in env
 
 
-def test_child_env_forwards_arize_credentials_to_hermes_only_when_configured(tmp_path, monkeypatch):
+def test_child_env_forwards_arize_credentials_only_when_configured(tmp_path, monkeypatch):
     from bubble_watch.harness import child_env
     settings = _settings(tmp_path, monkeypatch, XAI_API_KEY="xai-k")
-    assert "HERMES_ARIZE_API_KEY" not in child_env(settings, "")
+    assert "ARIZE_API_KEY" not in child_env(settings, "")
     settings = _settings(tmp_path, monkeypatch, XAI_API_KEY="xai-k",
                          ARIZE_SPACE_ID="sp", ARIZE_API_KEY="ak")
     env = child_env(settings, "")
-    assert env["HERMES_ARIZE_SPACE_ID"] == "sp" and env["HERMES_ARIZE_API_KEY"] == "ak"
-    assert env["HERMES_ARIZE_PROJECT_NAME"] == env["ARIZE_PROJECT_NAME"] == "bubble-watch"
+    assert env["ARIZE_SPACE_ID"] == "sp" and env["ARIZE_API_KEY"] == "ak"
+    assert env["ARIZE_PROJECT_NAME"] == "bubble-watch"
 
 
-def test_orchestrator_patch_gives_each_child_the_traceparent_name_it_reads(tmp_path, monkeypatch):
-    settings = _settings(tmp_path, monkeypatch, XAI_API_KEY="k",
+def test_orchestrator_patch_gives_the_tool_server_hermes_keys_too(tmp_path, monkeypatch):
+    """The analyst runs inside the tool server now, so its keys travel with the MCP row."""
+    settings = _settings(tmp_path, monkeypatch, XAI_API_KEY="k", TAVILY_API_KEY="tv",
                          ARIZE_SPACE_ID="sp", ARIZE_API_KEY="ak")
     text = Path(render_orchestrator_patch(settings, traceparent="00-a-b-01")).read_text()
-    assert "HERMES_ARIZE_TRACEPARENT: !!js process.env.HERMES_ARIZE_TRACEPARENT" in text
-    assert "TRACEPARENT: !!js process.env.TRACEPARENT" in text
-    assert "HERMES_ARIZE_API_KEY: !!js process.env.HERMES_ARIZE_API_KEY" in text
-    assert "ARIZE_API_KEY: !!js process.env.ARIZE_API_KEY" in text
+    for name in ("TRACEPARENT", "ARIZE_API_KEY", "XAI_API_KEY", "TAVILY_API_KEY"):
+        assert f"{name}: !!js process.env.{name}" in text
 
 
 def test_unbundled_plugins_are_referenced_by_package_name(tmp_path, monkeypatch):
@@ -172,16 +168,12 @@ def test_unbundled_plugins_are_referenced_by_package_name(tmp_path, monkeypatch)
     (`bubble-watch install-plugins`). Pointing a `name` at the checkout's lib/index.js instead
     loads a second copy of the plugin whose config validation fails against the bundle's copy."""
     text = Path(render_orchestrator_patch(_settings(tmp_path, monkeypatch))).read_text()
-    assert "name: '@deepseek-ai/dsh-subagent-acp'" in text
     assert "name: '@deepseek-ai/dsh-mcp-client'" in text
     names = re.findall(r"^\s+name: '([^']+)'$", text, re.MULTILINE)
     assert all(not n.endswith(".js") for n in names), names
 
 
-def test_bundled_plugins_are_still_referenced_by_name(tmp_path, monkeypatch):
-    """tool-subagent IS in the base bundle (it backs the shipped `subagent` tool), so it resolves."""
-    text = Path(render_orchestrator_patch(_settings(tmp_path, monkeypatch))).read_text()
-    assert "'@deepseek-ai/dsh-tool-subagent'" in text
+
 
 
 def test_patch_never_declares_an_env_var_that_is_not_set(tmp_path, monkeypatch):
@@ -198,6 +190,7 @@ def test_patch_never_declares_an_env_var_that_is_not_set(tmp_path, monkeypatch):
         assert var in child_env(settings, ""), f"{var} is declared but never set"
     assert "ALPHAVANTAGE_API_KEY: !!js" not in text
     assert "TRACEPARENT: !!js" not in text
+    assert "TAVILY_API_KEY: !!js" not in text
 
 
 def test_patch_declares_the_traceparent_once_the_run_has_one(tmp_path, monkeypatch):
@@ -205,5 +198,4 @@ def test_patch_declares_the_traceparent_once_the_run_has_one(tmp_path, monkeypat
                          ARIZE_SPACE_ID="sp", ARIZE_API_KEY="ak")
     text = Path(render_orchestrator_patch(settings, traceparent="00-a-b-01")).read_text()
     assert "TRACEPARENT: !!js process.env.TRACEPARENT" in text
-    assert "HERMES_ARIZE_TRACEPARENT: !!js process.env.HERMES_ARIZE_TRACEPARENT" in text
     assert "ARIZE_API_KEY: !!js process.env.ARIZE_API_KEY" in text

@@ -1,5 +1,6 @@
 import asyncio
 import datetime as dt
+import json
 
 from test_mcp_tools import DAY, FakeMarket
 
@@ -18,10 +19,10 @@ def _call(server, name, arguments):
     return asyncio.run(server.call_tool(name, arguments))
 
 
-def test_server_exposes_the_four_deterministic_tools(tmp_path):
+def test_server_exposes_the_deterministic_tools_and_the_analyst(tmp_path):
     server = build_server(_deps(tmp_path))
     names = {tool.name for tool in asyncio.run(server.list_tools())}
-    assert names == {"prepare_brief", "apply_gap_fills", "prior_state", "save_run"}
+    assert names == {"prepare_brief", "apply_gap_fills", "prior_state", "save_run", "hermes_analyst"}
 
 
 def test_every_tool_describes_itself_for_the_model(tmp_path):
@@ -58,4 +59,44 @@ def test_save_run_tool_persists_the_day(tmp_path):
 
 def test_server_instructions_forbid_recomputing_numbers(tmp_path):
     server = build_server(_deps(tmp_path))
-    assert "계산" in (server.instructions or "") or "compute" in (server.instructions or "").lower()
+    assert "compute" in (server.instructions or "").lower()
+
+
+def test_everything_the_model_reads_is_english(tmp_path):
+    """These strings land in span attributes; the people reading the traces do not read Korean."""
+    server = build_server(_deps(tmp_path))
+    surfaces = [server.instructions or ""]
+    for tool in asyncio.run(server.list_tools()):
+        surfaces += [tool.description or "", json.dumps(tool.input_schema, ensure_ascii=False)]
+    hangul = [s for s in surfaces if any("\uac00" <= c <= "\ud7a3" for c in s)]
+    assert hangul == []
+
+
+def test_server_exposes_the_hermes_analyst_tool(tmp_path):
+    names = {t.name for t in asyncio.run(build_server(_deps(tmp_path)).list_tools())}
+    assert "hermes_analyst" in names
+
+
+def test_hermes_analyst_tool_returns_text_and_session(tmp_path, monkeypatch):
+    import bubble_watch.mcp_server as srv
+
+    monkeypatch.setattr(srv, "hermes_analyst",
+                        lambda settings, task, session_id="", **kw: {"text": f"ok:{task}",
+                                                                     "session_id": "s-1"})
+    result = _call(build_server(_deps(tmp_path)), "hermes_analyst", {"task": "research this"})
+    assert result.structured_content == {"text": "ok:research this", "session_id": "s-1"}
+
+
+def test_hermes_analyst_tool_forwards_the_session_for_a_rebuttal(tmp_path, monkeypatch):
+    import bubble_watch.mcp_server as srv
+
+    seen = {}
+
+    def fake(settings, task, session_id="", **kw):
+        seen["session_id"] = session_id
+        return {"text": "t", "session_id": session_id}
+
+    monkeypatch.setattr(srv, "hermes_analyst", fake)
+    _call(build_server(_deps(tmp_path)), "hermes_analyst",
+          {"task": "rebut", "session_id": "s-1"})
+    assert seen["session_id"] == "s-1"

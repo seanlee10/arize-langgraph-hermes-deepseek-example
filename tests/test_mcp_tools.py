@@ -105,3 +105,30 @@ def test_save_run_persists_score_and_verdict_for_the_day(deps):
 def test_save_run_rejects_an_unknown_verdict(deps):
     with pytest.raises(ValueError, match="verdict"):
         save_run(deps(), DAY.isoformat(), score=5.0, verdict="MAYBE", note="", report_path="x.md")
+
+
+def test_prepare_brief_reports_the_trace_it_belongs_to(deps):
+    """The model writes the report before save_run, so it needs the trace id early enough to cite."""
+    from opentelemetry.sdk.trace import TracerProvider
+
+    tracer = TracerProvider().get_tracer("t")
+    with tracer.start_as_current_span("run") as span:
+        brief = prepare_brief(deps(), DAY.isoformat())
+        assert brief["trace_id"] == f"{span.get_span_context().trace_id:032x}"
+
+
+def test_prepare_brief_reports_no_trace_when_untraced(deps):
+    assert prepare_brief(deps(), DAY.isoformat())["trace_id"] is None
+
+
+def test_save_run_persists_the_trace_id(deps):
+    from opentelemetry.sdk.trace import TracerProvider
+
+    d = deps()
+    tracer = TracerProvider().get_tracer("t")
+    with tracer.start_as_current_span("run") as span:
+        prepare_brief(d, DAY.isoformat())
+        save_run(d, DAY.isoformat(), score=7.9, verdict="TRIGGERED", note="n", report_path="r.md")
+        expected = f"{span.get_span_context().trace_id:032x}"
+    record = next(r for r in load_state(d.state_path).records if r.date == DAY)
+    assert record.trace_id == expected

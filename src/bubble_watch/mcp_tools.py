@@ -12,16 +12,20 @@ from pathlib import Path
 from typing import Any
 
 from . import brief_graph
+from .config import Settings, load_settings
 from .market_data.base import GapFill, MarketDataProvider, MarketSnapshot, apply_fills
 from .models import DailyRecord, Verdict, WatchState, round1
 from .signals import compute_signals
 from .state_store import load_state, save_state
+from .tracing import current_trace_id
 
 
 @dataclass
 class ToolDeps:
     market: MarketDataProvider
     state_path: Path
+    #: Only the Hermes analyst needs these; the deterministic tools never read them.
+    settings: Settings = field(default_factory=load_settings)
     # One run is one dsh session, so the day's snapshot is held here between prepare_brief,
     # apply_gap_fills and save_run. A cold cache (server restart) re-fetches rather than failing.
     snapshots: dict[dt.date, MarketSnapshot] = field(default_factory=dict)
@@ -69,6 +73,9 @@ def prepare_brief(deps: ToolDeps, date: str) -> dict[str, Any]:
         "ticker": watch.ticker, "peer": watch.peer, "leveraged": watch.leveraged,
         "expiry": watch.expiry.isoformat(), "strikes": watch.strikes,
         "trigger_threshold": watch.trigger_threshold,
+        # Cited in the report's provenance: the model writes the report before save_run, so it
+        # needs the trace id while it still has somewhere to put it.
+        "trace_id": current_trace_id(),
         **_brief(deps, watch, day),
         "prior_dates": [r.date.isoformat() for r in prior[-5:]],
     }
@@ -132,7 +139,9 @@ def save_run(deps: ToolDeps, date: str, score: float, verdict: str, note: str,
     record.verdict = parsed_verdict
     record.note = note[:600]
     record.report_path = report_path
+    record.trace_id = current_trace_id()
     watch.upsert(record)
     save_state(watch, deps.state_path)
     return {"saved": True, "date": date, "score": score, "score_delta": record.score_delta,
-            "verdict": parsed_verdict.value, "state_path": str(deps.state_path)}
+            "verdict": parsed_verdict.value, "state_path": str(deps.state_path),
+            "trace_id": record.trace_id}

@@ -8,12 +8,18 @@ its own view, reconciles the two and writes the report.
 The concrete use case is a daily "NVDA Bubble Signal Watch" report in Korean, but the domain is
 incidental — the reusable parts are the seams, the composition and the tracing.
 
+**Everything the model reads is English; only the report is Korean.** Prompts, the skill, and every
+MCP tool description and parameter land in span attributes, and the people reading these traces do
+not read Korean. The report is the product, so it stays Korean — which means the root span's output
+and the `write` tool call still carry Korean text, and nothing else does. A test asserts the tool
+surface stays English.
+
 ```
 bubble-watch run --date D                    Python driver: owns the trace root, verifies the report
 └── dsh agent loop                           orchestrator AND second analyst
     ├── skill: bubble-watch                  the whole procedure, as instructions
     ├── mcp__bubble__prepare_brief           LangGraph: fetch market data → compute signals
-    ├── hermes_analyst(task)                 ACP subagent: gap research, catalysts, its own view
+    ├── mcp__bubble__hermes_analyst(task)    Hermes: gap research, catalysts, its own view
     ├── mcp__bubble__apply_gap_fills         sourced values only, re-computed
     ├── (own view → compare → rebuttal round if they diverge)
     ├── write(reports/D-NVDA.md)
@@ -31,14 +37,27 @@ example.
 
 | | Hermes Agent | LangGraph | dsh itself |
 |---|---|---|---|
-| Seam | `dsh-subagent-acp` → `bin/hermes-acp` | `dsh-mcp-client` → `bubble-watch mcp` | the agent loop |
-| Wiring | **config only** (a patch layer) | one stdio MCP server | a `SKILL.md` |
-| Isolation | own process, session, model, tools; `HERMES_HOME` = `.hermes-analyst/` | own process | — |
-| Tracing | traces itself; parents on `HERMES_ARIZE_TRACEPARENT` | `openinference-instrumentation-langchain`; parents on `TRACEPARENT` | spans rebuilt live from the SDK event stream |
+| Seam | one-shot CLI subprocess per call, hosted by the tool server | `dsh-mcp-client` → `bubble-watch mcp` | the agent loop |
+| Wiring | `hermes_tool.py` | one stdio MCP server | a `SKILL.md` |
+| Isolation | own process, session, toolset; `HERMES_HOME` = `.hermes-analyst/` | own process | — |
+| Tracing | traces itself, nested under the call's span | `openinference-instrumentation-langchain`; parents on `TRACEPARENT` | spans rebuilt live from the SDK event stream |
 
-Hermes ships an ACP adapter and dsh ships an ACP subagent backend, so that integration is a YAML
-insert with no glue code. LangGraph is not an agent and is not pretended to be one: it is a tool
-server, which is the shape a deterministic pipeline actually has.
+LangGraph is not an agent and is not pretended to be one: it is a tool server, which is the shape a
+deterministic pipeline actually has.
+
+### Why Hermes is not an ACP subagent
+
+dsh ships an ACP subagent backend and Hermes ships an ACP adapter, so wiring them together is
+config-only — that was the first implementation, and it worked. It was replaced because **Hermes'
+ACP adapter builds an `AIAgent` directly and never touches `hermes_cli`'s plugin dispatch, so no
+plugin hook fires over ACP** — including `observability/arize`, which is how Hermes traces itself.
+Proven by running both paths with an identical home, environment, credentials and `traceparent`:
+`hermes chat -Q` emitted `Hermes turn` + `LLM call 1`, correctly parented; `hermes-acp` emitted
+nothing.
+
+Hosting the analyst inside the MCP tool server instead turned out better than the seam it replaced:
+that process owns a real OTel context, so each call gets its own span and Hermes' spans nest
+**inside the call** rather than beside it.
 
 ## What is deterministic and what is not
 
@@ -63,13 +82,11 @@ Requires Python 3.13 (`uv`), Node ≥ 22.19 for dsh, and local checkouts of both
    `bin/dsh` launches the built CLI (`DSH_NODE` / `DSH_REPO` override the paths). Launching the TS
    source via `tsx` mixes src/lib plugin copies and every tool call fails, so the built CLI is used
    deliberately.
-3. **Hermes runtime** — `bin/hermes-acp` runs the **repo checkout**'s ACP adapter
-   (`$HERMES_REPO/.venv/bin/hermes-acp`, default `~/projects/hermes-agent`): that checkout has the
-   Tavily web backend and the `observability/arize` plugin. In it run `uv sync`, then
-   `uv pip install 'agent-client-protocol==0.9.0' arize-otel`. The ACP package is an optional extra
-   Hermes does not install by default, and its adapter imports it lazily — without it `hermes-acp`
-   starts and then exits 1 at ACP initialize, which surfaces only as a failed delegation mid-run.
-   `bubble-watch doctor` runs `hermes-acp --check` so you find out at setup instead.
+3. **Hermes runtime** — `bin/hermes` runs the **repo checkout** (`$HERMES_REPO/.venv/bin/hermes`,
+   default `~/projects/hermes-agent`), not an installed `hermes`: that checkout has the Tavily web
+   backend and the `observability/arize` plugin. In it run `uv sync`, then
+   `uv pip install arize-otel` — the plugin needs it to export spans and Hermes does not install it
+   by default. `bubble-watch doctor` checks the runtime starts.
 4. `cp .env.example .env` and fill in `XAI_API_KEY`, `TAVILY_API_KEY`, `ALPHA_VANTAGE_API_KEY` and
    the `ARIZE_*` keys.
 5. `uv run bubble-watch install-plugins` — installs the two dsh plugins the base bundle does not
@@ -184,8 +201,8 @@ host paths — a sibling container's mount is resolved by the daemon, wherever t
 ## Tracing
 
 One run is one trace in the Arize project `bubble-watch`. The driver opens the root span *before*
-launching dsh, which is what makes a single `traceparent` available at composition time — the ACP and
-MCP backends read their `env` once, when the composition loads, so there is no per-call channel.
+launching dsh, which is what makes a `traceparent` available at composition time — the MCP backend
+reads its `env` once, when the composition loads.
 
 Verified shape of one run (52 spans, single root):
 
@@ -194,13 +211,16 @@ bubble-watch run                    CHAIN   ← the only root
 ├── dsh session                     AGENT   built live from the SDK's on_notification callback
 │   ├── mcp__bubble__prior_state    TOOL
 │   ├── mcp__bubble__prepare_brief  TOOL    real start/end, from event arrival
-│   ├── hermes_analyst              TOOL    the ACP delegation
+│   ├── mcp__bubble__hermes_analyst TOOL    the delegation
 │   ├── mcp__bubble__apply_gap_fills TOOL
-│   ├── hermes_analyst              TOOL    second view
+│   ├── mcp__bubble__hermes_analyst TOOL    second view
 │   └── … web_fetch / write / mcp__bubble__save_run
 ├── LangGraph                       CHAIN   ← a different process, via TRACEPARENT
 │   ├── fetch_market_data
 │   └── compute_signals
+├── hermes analyst                  AGENT   ← per-call span, opened by the tool server
+│   └── Hermes turn                 AGENT   ← Hermes' own spans, nested inside the call
+│       └── LLM call 1              LLM
 └── LangGraph                       CHAIN   ← second invocation (apply_gap_fills)
 ```
 
@@ -213,29 +233,105 @@ process boundary, and the spans land in the same trace either way.
 dsh emits OpenTelemetry *logs*, not spans, so its tool activity is reconstructed. Building it from
 the live callback rather than from the finished event list is what gives those spans real durations.
 
-Two fidelity costs, both measured rather than assumed:
+One fidelity cost, measured rather than assumed: the MCP server's own spans (LangGraph, and the
+`hermes analyst` call) parent on the **run root**, not on the `mcp__bubble__*` tool span that
+triggered them. The MCP backend's `env` is static, read once at load, so there is no per-call
+channel to carry a per-call parent across that boundary. Hermes is unaffected — its parent is
+chosen inside the tool server, where a live span exists.
 
-- Both children parent on the run root, so a child's spans are siblings of the `hermes_analyst` /
-  `mcp__bubble__*` tool spans rather than nested inside them. The ACP and MCP backends expose no
-  per-call channel, so there is no per-call span to parent on.
-- **Hermes contributes no spans of its own over ACP.** Its `observability/arize` plugin instruments
-  the chat/gateway turn lifecycle, and the ACP adapter does not go through it. This was isolated by
-  running both paths with an identical home, environment, credentials and `traceparent`:
-  `hermes chat -Q` emitted `Hermes turn` + `LLM call 1` correctly parented on the supplied
-  traceparent, while `hermes-acp` emitted nothing. Hermes' work is therefore attributed and timed in
-  the trace as the `hermes_analyst` TOOL span, but not decomposed into its internal LLM and tool
-  calls. Closing that gap means instrumenting the ACP surface in the Hermes checkout.
+`session.id` is stamped on **every span this repo produces**, through two mechanisms because they
+cover different spans: `using_session` is what OpenInference instrumentors (LangGraph) read, while
+the spans built here by hand read a context variable. Setting it on one span only — as an earlier
+version did — yields a partial tree in a session-filtered view.
+
+One span group stays outside it: **Hermes stamps its own session id** on its own spans, because its
+`observability/arize` plugin owns that attribute and exposes no override. So a run looks like this:
+
+```
+probe root       session.id=bubble-watch-2026-09-18
+└── hermes analyst   session.id=bubble-watch-2026-09-18
+    └── Hermes turn      session.id=20260923_150836_e0843e   ← Hermes' own
+        └── LLM call 1   session.id=20260923_150836_e0843e
+```
+
+The parent/child links are intact and the **trace** is complete — it is only a session-*filtered*
+view that splits in two. That is arguably correct (Hermes' spans do belong to a Hermes session), and
+changing it would mean editing the Hermes checkout. Open the trace, not the session.
 
 Tracing is optional — without `ARIZE_*` credentials everything runs with a no-op tracer.
 
+### Identifiers: what is propagated, and what is persisted
+
+Four ids are in play, and they are owned by three different systems.
+
+**Trace context travels as environment variables and is persisted nowhere.** Two *different*
+traceparents are in flight, which is exactly what gives Hermes its extra nesting level.
+
+To the tool server — the **run root**:
+
+```
+driver: agent_span("bubble-watch run")        OTel mints trace_id + span_id
+  └─ TraceContextTextMapPropagator().inject()
+     TRACEPARENT=00-<trace_id>-<root span_id>-01
+        └─ child_env() → DeepSeekHarness(env=…)            dsh process env
+           └─ composition: TRACEPARENT: !!js process.env.TRACEPARENT   (static, read at load)
+              └─ spawn, or `docker run -e TRACEPARENT`     tool server process env
+                 └─ remote_parent_context() → extract → context.attach()
+                    every span in that process nests under the root
+```
+
+To Hermes — a **per-call** parent, built inside the tool server where a live span exists:
+
+```
+tool server: agent_span("hermes analyst")     new span_id, same trace_id
+  └─ HERMES_ARIZE_TRACEPARENT=00-<trace_id>-<hermes analyst span_id>-01
+     └─ subprocess env, or `docker run -e`    hermes chat process
+        └─ observability/arize plugin reads it → "Hermes turn" parents on that span
+```
+
+The run's `trace_id` is also **persisted**: `prepare_brief` returns it so the model can cite it in
+the report's provenance line, and `save_run` stores it on the day's record. A stored run or a
+delivered report therefore leads back to its trace.
+
+**Session ids**, each owned elsewhere:
+
+| Id | Shape | Created by | Persisted by | Propagated by |
+|---|---|---|---|---|
+| dsh session | `bubble-watch-<date>-<8 hex>` | `orchestrator.session_ids()`, per run | **dsh**, under `$DSH_HOME/sessions/` | `harness.run(session_id=…)` |
+| Arize session key | `bubble-watch-<date>`, stable per day | the same call | nothing — a span attribute | `session_context()` in the driver; `BUBBLE_WATCH_SESSION_ID` to the tool server |
+| Hermes session | `20260923_145812_84bc3a` | **Hermes** | **Hermes**, in `.hermes-analyst/state.db` | parsed off stderr → returned to the model → passed back → `--resume` |
+
+The two `bubble-watch-<date>*` ids are split deliberately: dsh rejects a duplicate session id, so it
+needs a fresh one per run, while Arize needs a stable key to keep a day's re-runs grouped.
+
+## Hermes stream timeouts
+
+Hermes' stream watchdog arms on the first parsed event and then kills the LLM call after a period of
+silence. Against xAI that default resolves to about **12 seconds** — and grok-4.6 is a reasoning
+model that spends longer than that thinking between tokens. Left alone, every analyst call dies with
+`Codex stream produced no SSE events for 12s`, retries three times, and the turn fails; the run
+still completes because the orchestrator retries the delegation, but it is slow and the trace fills
+with errors.
+
+`hermes_env()` therefore sets `HERMES_CODEX_EVENT_STALE_TIMEOUT_SECONDS` to 180s
+(`HERMES_STREAM_IDLE_S` to override). A genuinely hung stream is still killed, just not a thinking
+one.
+
 ## Known gaps
 
-- **Hermes emits no spans over ACP** — see Tracing above. Its turn is visible as one TOOL span.
-- **`platform_toolsets.acp` may not be honored.** The isolated home requests the `web` toolset only,
-  but an ACP delegation logged `tools.terminal_tool: Shutting down 1 remaining sandbox(es)`, so the
-  ACP surface appears to use its own default toolset. The home is still isolated (`HERMES_HOME`,
-  platform credentials stripped), but the analyst may have more tools than intended. Worth
-  confirming against the Hermes checkout before relying on the narrower surface.
+- **A session-filtered view splits in two**, because Hermes stamps its own session id on its own
+  spans — see Tracing above. The trace itself is complete.
+- **Hermes session continuity rides on the model.** The tool returns `session_id` and `SKILL.md`
+  asks for it back on the rebuttal round, but nothing enforces it. If the model drops it, Hermes
+  starts a fresh conversation and silently loses the first view — no error, no note in the report.
+  The deterministic alternative is for the tool server to remember the last session id per run and
+  resume automatically unless told otherwise.
+- The MCP server's spans parent on the run root rather than the tool call that triggered them —
+  see Tracing above.
+- **A trace looks broken while a run is in progress.** `bubble-watch run` and `dsh session` stay
+  open for the whole run, so until it ends they have not been exported and every completed child
+  span shows as orphaned ("its parent span is missing"). It resolves when the run finishes. This is
+  inherent to exporting a span at its end, not a wiring fault.
 - The diagrams and trace screenshots under `docs/` predate all of this.
 
 ## Data rules
@@ -255,7 +351,8 @@ rather than a signal.
 src/bubble_watch/
   orchestrator.py  the driver: trace root, traceparent, run verification
   harness.py       dsh composition and launch; the isolated Hermes home; the child environment
-  mcp_server.py    the four tools, as an MCP stdio server      mcp_tools.py  their implementations
+  mcp_server.py    the five tools, as an MCP stdio server      mcp_tools.py  their implementations
+  hermes_tool.py   the Hermes analyst: one-shot CLI per call, with its own span
   brief_graph.py   the LangGraph pipeline: fetch market data → compute signals
   signals.py       pure signal computation                      state_store.py  JSON persistence
   market_data/     alphavantage.py (primary) · yfinance_provider.py (fallback) · base.py (gaps)
@@ -267,10 +364,10 @@ dsh/
   plugins/                 web-search-tavily.mjs
 docker/
   Dockerfile.mcp-tools     built from this repo
-  Dockerfile.hermes-acp    built from the Hermes checkout
+  Dockerfile.hermes        built from the Hermes checkout
   Dockerfile.dsh-runner    built from the dsh checkout; carries the Docker CLI
   build.sh                 all three, with the right contexts
-bin/              dsh, hermes-acp, dsh-docker launchers
+bin/              dsh, hermes, dsh-docker, hermes-docker launchers
 ```
 
 ## Tests

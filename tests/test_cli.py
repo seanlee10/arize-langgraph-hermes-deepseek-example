@@ -54,12 +54,12 @@ def test_doctor_reports_names_never_values(tmp_path, monkeypatch):
     assert not any("xai-SECRET" in c[3] for c in checks.values())
 
 
-def test_doctor_checks_the_hermes_acp_launcher(tmp_path, monkeypatch):
+def test_doctor_checks_the_hermes_launcher(tmp_path, monkeypatch):
     settings = _doctor_env(tmp_path, monkeypatch)
-    monkeypatch.setenv("HERMES_ACP_BIN", "definitely-not-a-launcher")
+    monkeypatch.setenv("HERMES_BIN", "definitely-not-a-launcher")
     checks = _checks(load_settings(tmp_path / "none.env"))
-    assert checks["Hermes ACP launcher"][1] is False
-    assert _checks(settings)["Hermes ACP launcher"][1] is True
+    assert checks["Hermes launcher"][1] is False
+    assert _checks(settings)["Hermes launcher"][1] is True
 
 
 def test_doctor_installs_and_reports_the_orchestration_skill(tmp_path, monkeypatch):
@@ -139,16 +139,15 @@ def _fake_runner(returncode, stderr=""):
     return runner
 
 
-def test_doctor_runs_the_hermes_acp_self_check(tmp_path, monkeypatch):
+def test_doctor_runs_the_hermes_self_check(tmp_path, monkeypatch):
     settings = _doctor_env(tmp_path, monkeypatch)
     checks = {c[0]: c for c in doctor_checks(settings, httpx.Client(), runner=_fake_runner(0))}
-    assert checks["Hermes ACP runtime"][1] is True
+    assert checks["Hermes runtime"][1] is True
 
 
-def test_doctor_explains_a_failing_hermes_acp_check(tmp_path, monkeypatch):
+def test_doctor_explains_a_failing_hermes_check(tmp_path, monkeypatch):
     settings = _doctor_env(tmp_path, monkeypatch)
-    runner = _fake_runner(1, "ModuleNotFoundError: No module named 'acp'")
-    checks = {c[0]: c for c in doctor_checks(settings, httpx.Client(), runner=runner)}
-    check = checks["Hermes ACP runtime"]
+    checks = {c[0]: c for c in doctor_checks(settings, httpx.Client(), runner=_fake_runner(1, "boom"))}
+    check = checks["Hermes runtime"]
     assert check[1] is False
-    assert "agent-client-protocol" in check[3]   # names the fix, not just the error
+    assert "uv sync" in check[3]   # names the fix, not just the error

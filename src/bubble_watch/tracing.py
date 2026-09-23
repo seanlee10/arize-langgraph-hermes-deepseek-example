@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import json
 from collections.abc import Iterator
 from typing import Any
@@ -10,6 +11,11 @@ from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 
 KIND, INPUT, OUTPUT = "openinference.span.kind", "input.value", "output.value"
+SESSION = "session.id"
+
+#: The Arize grouping key for the current run. `using_session` only reaches spans made by an
+#: OpenInference instrumentor (LangGraph's); the spans this module builds by hand read it here.
+_SESSION_ID: contextvars.ContextVar[str] = contextvars.ContextVar("bubble_watch_session", default="")
 MAX_ATTR = 16_000
 
 
@@ -40,6 +46,43 @@ def shutdown_tracing(provider: Any) -> None:
     if provider is not None:
         provider.force_flush()
         provider.shutdown()
+
+
+@contextlib.contextmanager
+def session_context(session_id: str) -> Iterator[None]:
+    """Stamp `session.id` on every span opened inside, not just one.
+
+    Arize groups sessions by that attribute, so setting it on a single span yields a partial tree
+    in a session-filtered view. Two mechanisms are needed, because they cover different spans:
+    `using_session` is read by OpenInference instrumentors (LangGraph), while the spans built here
+    by hand read the context variable directly. Empty id is a no-op.
+    """
+    if not session_id:
+        yield
+        return
+    from openinference.instrumentation import using_session
+
+    token = _SESSION_ID.set(session_id)
+    try:
+        with using_session(session_id):
+            yield
+    finally:
+        _SESSION_ID.reset(token)
+
+
+def _stamp_session(span: trace.Span) -> None:
+    if session_id := _SESSION_ID.get():
+        span.set_attribute(SESSION, session_id)
+
+
+def current_trace_id() -> str | None:
+    """The trace this process is contributing to, as 32 hex characters.
+
+    Works across a process boundary: the MCP server attaches the run's remote parent context at
+    startup, so the ambient span context carries the caller's trace id even with no local span.
+    """
+    ctx = trace.get_current_span().get_span_context()
+    return f"{ctx.trace_id:032x}" if ctx.is_valid else None
 
 
 def remote_parent_context(env: dict[str, str] | None = None) -> Any:
@@ -85,6 +128,7 @@ def agent_span(tracer: trace.Tracer, name: str, *, input_value: Any, kind: str =
                                       set_status_on_exception=False) as span:
         span.set_attribute(KIND, kind)
         span.set_attribute(INPUT, _text(input_value))
+        _stamp_session(span)
         for key, value in (attributes or {}).items():
             if value is not None:
                 span.set_attribute(key, value)
@@ -144,6 +188,7 @@ class DshSpanBuilder:
         name = block.get("toolName") or block.get("name") or "tool"
         span = self._tracer.start_span(name, context=self._context)
         span.set_attribute(KIND, "TOOL")
+        _stamp_session(span)
         span.set_attribute("tool.name", name)
         span.set_attribute("tool.id", cid)
         span.set_attribute(INPUT, _text(next((block[k] for k in _INPUT_KEYS if k in block), None)))

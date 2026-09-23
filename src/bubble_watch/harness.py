@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import PROJECT_ROOT, Settings
+from .hermes_tool import PLATFORM_ENV_PREFIXES, ensure_hermes_home
 
 SEARCH_PATCH_TEMPLATE = PROJECT_ROOT / "dsh" / "web-search.patch.yml"
 ORCHESTRATOR_PATCH_TEMPLATE = PROJECT_ROOT / "dsh" / "orchestrator.patch.yml"
@@ -40,52 +41,14 @@ llm-pi-ai:
 """
 
 
-_HERMES_CONFIG = """\
-# Written by bubble-watch: isolated Hermes home for the analyst dsh delegates to over ACP.
-model:
-  default: {model}
-  provider: xai
-# The analyst only researches: web_search + web_extract. No terminal toolset means no shell
-# commands to pre-scan, so the tirith scanner (auto-downloaded from GitHub) is not needed.
-platform_toolsets:
-  cli: [web]
-  acp: [web]
-  api_server: [web]
-security:
-  tirith_enabled: false
-# Hermes traces its own turn/LLM/tool spans into this run's trace (HERMES_ARIZE_TRACEPARENT).
-plugins:
-  enabled:
-    - observability/arize
-"""
 
-# Messaging platforms read their credentials from env; never let this home bring a bot online.
-_PLATFORM_ENV_PREFIXES = ("TELEGRAM_", "DISCORD_", "SLACK_", "WHATSAPP_", "SIGNAL_", "MATRIX_", "MATTERMOST_",
-                          "BLUEBUBBLES_", "WEIXIN_", "YUANBAO_", "QQBOT_", "TEAMS_", "MSGRAPH_", "EMAIL_", "SMS_")
-
-
-def ensure_hermes_home(home: Path, model: str) -> Path:
-    """Create the isolated HERMES_HOME with a Grok, web-only config; never overwrite an existing one.
-
-    The user's own ~/.hermes and its messaging platforms are never touched.
-    """
-    home = Path(home)
-    home.mkdir(parents=True, exist_ok=True)
-    cfg = home / "config.yaml"
-    if not cfg.exists():
-        cfg.write_text(_HERMES_CONFIG.format(model=model))
-    return home
-
-
-def child_env(settings: Settings, traceparent: str) -> dict[str, str]:
+def child_env(settings: Settings, traceparent: str, session_id: str = "") -> dict[str, str]:
     """The environment dsh is launched with, and through it both children.
 
-    Every value the ACP and MCP composition rows look up with `!!js process.env` must be here:
-    those backends scrub credential-shaped ambient variables, so inheritance alone is not enough.
-    Hermes' Arize plugin reads `HERMES_ARIZE_*`, the Python side reads the OTel/Arize names, so the
-    same traceparent is published under both.
+    Every value the MCP composition row looks up with `!!js process.env` must be here: the backend
+    scrubs credential-shaped ambient variables, so inheritance alone is not enough.
     """
-    env = {k: v for k, v in os.environ.items() if not k.startswith(_PLATFORM_ENV_PREFIXES)}
+    env = {k: v for k, v in os.environ.items() if not k.startswith(PLATFORM_ENV_PREFIXES)}
     env["XAI_API_KEY"] = settings.xai_api_key
     env["TIRITH_ENABLED"] = "false"
     for name, value in (("TAVILY_API_KEY", settings.tavily_api_key), ("EXA_API_KEY", settings.exa_api_key),
@@ -93,13 +56,16 @@ def child_env(settings: Settings, traceparent: str) -> dict[str, str]:
         if value:
             env[name] = value
     if traceparent:
-        env["TRACEPARENT"] = env["HERMES_ARIZE_TRACEPARENT"] = traceparent
+        env["TRACEPARENT"] = traceparent
+    if session_id:
+        # The tool server is a different process and cannot derive the grouping key itself.
+        env["BUBBLE_WATCH_SESSION_ID"] = session_id
     if settings.arize_space_id and settings.arize_api_key:
-        arize = {"SPACE_ID": settings.arize_space_id, "API_KEY": settings.arize_api_key,
-                 "PROJECT_NAME": settings.arize_project, "COLLECTOR_ENDPOINT": settings.arize_endpoint}
-        for suffix, value in arize.items():
-            # Same Arize project for all three runtimes: spans only join one trace within a project.
-            env[f"ARIZE_{suffix}"] = env[f"HERMES_ARIZE_{suffix}"] = value
+        # Same Arize project for every runtime: spans only join one trace within a project. The
+        # tool server derives Hermes' own HERMES_ARIZE_* names from these, per call.
+        env.update(ARIZE_SPACE_ID=settings.arize_space_id, ARIZE_API_KEY=settings.arize_api_key,
+                   ARIZE_PROJECT_NAME=settings.arize_project,
+                   ARIZE_COLLECTOR_ENDPOINT=settings.arize_endpoint)
     return env
 
 
@@ -129,12 +95,11 @@ def render_search_patch(dsh_home: str, provider: str, plugin_entry: Path, api_ke
                    {"provider": provider, "plugin_entry": str(plugin_entry), "api_key_env": api_key_env})
 
 
-#: Variables each child row may declare. A name is emitted only when `child_env` actually sets it.
-HERMES_ENV_NAMES = ("XAI_API_KEY", "TAVILY_API_KEY", "EXA_API_KEY", "TIRITH_ENABLED",
-                    "HERMES_ARIZE_TRACEPARENT", "HERMES_ARIZE_SPACE_ID", "HERMES_ARIZE_API_KEY",
-                    "HERMES_ARIZE_PROJECT_NAME", "HERMES_ARIZE_COLLECTOR_ENDPOINT")
-MCP_ENV_NAMES = ("TRACEPARENT", "ARIZE_SPACE_ID", "ARIZE_API_KEY", "ARIZE_PROJECT_NAME",
-                 "ARIZE_COLLECTOR_ENDPOINT", "ALPHAVANTAGE_API_KEY")
+#: Variables the MCP row may declare. A name is emitted only when `child_env` actually sets it.
+#: The server hosts the Hermes analyst too, so it needs Hermes' keys as well as the data ones.
+MCP_ENV_NAMES = ("TRACEPARENT", "BUBBLE_WATCH_SESSION_ID", "ARIZE_SPACE_ID", "ARIZE_API_KEY",
+                 "ARIZE_PROJECT_NAME", "ARIZE_COLLECTOR_ENDPOINT", "ALPHAVANTAGE_API_KEY",
+                 "XAI_API_KEY", "TAVILY_API_KEY", "EXA_API_KEY", "HERMES_REPO")
 
 
 def _env_block(names: tuple[str, ...], available: dict[str, str]) -> str:
@@ -174,16 +139,16 @@ def _patch_names(settings: Settings) -> tuple[str, ...]:
     return (*search, "orchestrator.patch.yml")
 
 
-def render_orchestrator_patch(settings: Settings, traceparent: str = "") -> Path:
+def render_orchestrator_patch(settings: Settings, traceparent: str = "",
+                              session_id: str = "") -> Path:
     """Write the orchestration overlay into DSH_HOME: the Hermes ACP subagent and the MCP tool server.
 
     Both modes produce the same file name, so the composition is selected by how bubble-watch is
     deployed rather than by the dsh profile.
     """
     destination = Path(settings.dsh_home) / "orchestrator.patch.yml"
-    available = child_env(settings, traceparent)
-    env_values = {"hermes_env": _env_block(HERMES_ENV_NAMES, available),
-                  "mcp_env": _env_block(MCP_ENV_NAMES, available)}
+    available = child_env(settings, traceparent, session_id)
+    env_values = {"mcp_env": _env_block(MCP_ENV_NAMES, available)}
     if in_containers(settings):
         return _render(CONTAINERS_PATCH_TEMPLATE, destination, {
             **env_values,
@@ -194,8 +159,6 @@ def render_orchestrator_patch(settings: Settings, traceparent: str = "") -> Path
         })
     return _render(ORCHESTRATOR_PATCH_TEMPLATE, destination, {
         **env_values,
-        "hermes_acp_bin": settings.hermes_acp_bin,
-        "hermes_home": str(settings.hermes_home),
         "project_root": str(PROJECT_ROOT),
         "uv_bin": shutil.which("uv") or "uv",
     })
@@ -204,7 +167,7 @@ def render_orchestrator_patch(settings: Settings, traceparent: str = "") -> Path
 #: Plugins the orchestration composition needs that dsh's base bundle does not carry. They are
 #: installed into the profile package tree, where their peer imports reach the bundle; loading them
 #: from the checkout by path instead gives a second copy whose config validation does not match.
-PROFILE_PLUGINS = ("@deepseek-ai/dsh-mcp-client", "@deepseek-ai/dsh-subagent-acp")
+PROFILE_PLUGINS = ("@deepseek-ai/dsh-mcp-client",)
 PROFILE = "sdk"
 
 
@@ -277,16 +240,18 @@ def search_patches(settings: Settings) -> tuple[tuple[str, ...], dict[str, str]]
     return (), {}
 
 
-def orchestrator_patches(settings: Settings, traceparent: str = "") -> tuple[tuple[str, ...], dict[str, str]]:
+def orchestrator_patches(settings: Settings, traceparent: str = "",
+                         session_id: str = "") -> tuple[tuple[str, ...], dict[str, str]]:
     """Every patch layer the orchestrator needs, in application order, plus the env they reference.
 
     Search comes first so the orchestration layer can rely on `web` already being configured.
     """
     patches, env = search_patches(settings)
-    return (*patches, str(render_orchestrator_patch(settings, traceparent))), env
+    return (*patches, str(render_orchestrator_patch(settings, traceparent, session_id))), env
 
 
-def make_harness_factory(settings: Settings, traceparent: str = "") -> Callable[[], Any]:
+def make_harness_factory(settings: Settings, traceparent: str = "",
+                         session_id: str = "") -> Callable[[], Any]:
     """Build the dsh runtime. `traceparent` is read by the composition's `!!js process.env` lookups,
     so both children parent their spans on this run's root span."""
 
@@ -296,9 +261,9 @@ def make_harness_factory(settings: Settings, traceparent: str = "") -> Callable[
         ensure_dsh_home(settings.dsh_home, settings.dsh_model, settings.dsh_provider, settings.xai_base_url)
         ensure_hermes_home(settings.hermes_home, settings.hermes_model or settings.dsh_model)
         install_skill(settings)
-        orchestrator_patches(settings, traceparent)   # render every layer onto the host
+        orchestrator_patches(settings, traceparent, session_id)   # render every layer onto the host
         dsh_home, cwd, patches = launch_paths(settings)   # …then name them as dsh will see them
-        env = child_env(settings, traceparent)
+        env = child_env(settings, traceparent, session_id)
         return DeepSeekHarness(
             dsh_bin=settings.dsh_bin, dsh_home=dsh_home, cwd=cwd,
             provider=settings.dsh_provider, model=settings.dsh_model, patches=patches, env=env,

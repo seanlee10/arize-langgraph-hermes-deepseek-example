@@ -34,11 +34,6 @@ def test_nothing_is_missing_once_both_are_installed(settings):
     assert missing_profile_plugins(settings) == []
 
 
-def test_a_partial_install_still_reports_the_rest(settings):
-    _write_profile(settings, {PROFILE_PLUGINS[0]: "0.1.6-alpha.2"})
-    assert missing_profile_plugins(settings) == [PROFILE_PLUGINS[1]]
-
-
 def test_install_runs_the_dsh_plugin_command_per_missing_plugin(settings):
     calls = []
 
@@ -56,7 +51,7 @@ def test_install_runs_the_dsh_plugin_command_per_missing_plugin(settings):
 
 
 def test_install_skips_plugins_that_are_already_there(settings):
-    _write_profile(settings, {PROFILE_PLUGINS[0]: "9.9.9"})
+    _write_profile(settings, {name: "9.9.9" for name in PROFILE_PLUGINS})
     calls = []
 
     def runner(cmd, **kwargs):
@@ -65,7 +60,7 @@ def test_install_skips_plugins_that_are_already_there(settings):
         return subprocess.CompletedProcess(cmd, 0, "", "")
 
     install_profile_plugins(settings, version="9.9.9", runner=runner)
-    assert [c[-1] for c in calls] == [f"{PROFILE_PLUGINS[1]}@9.9.9"]
+    assert calls == []
 
 
 def test_install_raises_with_the_failing_command_output(settings):

@@ -18,7 +18,8 @@ class Settings:
     xai_base_url: str
     hermes_model: str | None
     hermes_home: Path
-    hermes_acp_bin: str
+    hermes_bin: str
+    hermes_stream_idle_s: float
     hermes_repo: str
     dsh_bin: str
     dsh_repo: str
@@ -57,11 +58,16 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
     return Settings(
         xai_api_key=_env("XAI_API_KEY"),
         xai_base_url=_env("XAI_BASE_URL", "https://api.x.ai/v1"),
-        # Unset: the Hermes ACP child falls back to the orchestrator's model.
+        # Unset: the Hermes analyst falls back to the orchestrator's model.
         hermes_model=_env("HERMES_ANALYST_MODEL") or None,
         hermes_home=Path(_env("HERMES_ANALYST_HOME", str(PROJECT_ROOT / ".hermes-analyst"))),
-        # the repo checkout's ACP adapter: dsh drives it as a subagent over JSON-RPC on stdio
-        hermes_acp_bin=_env("HERMES_ACP_BIN", str(PROJECT_ROOT / "bin" / "hermes-acp")),
+        # the repo checkout, not an installed hermes: it carries the Tavily web backend and the
+        # observability/arize plugin. Driven over its one-shot CLI — see hermes_tool.py for why.
+        hermes_bin=_env("HERMES_BIN", str(PROJECT_ROOT / "bin" / "hermes")),
+        # Hermes' stream watchdog arms on the first parsed event, then kills the LLM call after
+        # this many seconds of silence. Its default resolves to ~12s against xAI, which a
+        # reasoning model like grok-4.6 exceeds on almost every call.
+        hermes_stream_idle_s=float(_env("HERMES_STREAM_IDLE_S", "180")),
         hermes_repo=_env("HERMES_REPO", str(Path.home() / "projects" / "hermes-agent")),
         dsh_bin=_env("DSH_BIN", str(PROJECT_ROOT / "bin" / "dsh")),
         dsh_repo=_env("DSH_REPO", str(Path.home() / "projects" / "deepseek-harness")),
@@ -72,7 +78,7 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         # so it is a host path even when the command is issued from inside a container.
         host_root=_env("BUBBLE_WATCH_HOST_ROOT", str(PROJECT_ROOT)),
         mcp_image=_env("BUBBLE_WATCH_MCP_IMAGE", "bubble-watch/mcp-tools"),
-        hermes_image=_env("BUBBLE_WATCH_HERMES_IMAGE", "bubble-watch/hermes-acp"),
+        hermes_image=_env("BUBBLE_WATCH_HERMES_IMAGE", "bubble-watch/hermes"),
         dsh_provider=_env("DSH_PROVIDER", "xai"),
         dsh_model=_env("DSH_ANALYST_MODEL", DEFAULT_MODEL),
         writer_model=_env("WRITER_MODEL", DEFAULT_MODEL),

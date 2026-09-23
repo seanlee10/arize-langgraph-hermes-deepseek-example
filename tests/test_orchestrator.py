@@ -153,3 +153,27 @@ def test_each_run_of_a_day_gets_its_own_dsh_session(traced, tmp_path):
     assert seen[0] != seen[1]
     session_spans = [s for s in exporter.get_finished_spans() if s.name == "dsh session"]
     assert {s.attributes["session.id"] for s in session_spans} == {"bubble-watch-2026-09-18"}
+
+
+def test_every_span_carries_the_arize_session_key(traced, tmp_path):
+    """Not just the `dsh session` span: a session-filtered view in Arize should show the whole
+    tree, including the root and anything the tool server contributes."""
+    exporter, tracer = traced
+    report = tmp_path / "reports" / "2026-09-18-NVDA.md"
+    notifications = [_event("c1", "mcp__bubble__prepare_brief"),
+                     _event("c1", "mcp__bubble__prepare_brief", kind="tool-result", output="{}")]
+    _run(tracer, FakeHarness(report_path=report, notifications=notifications), report)
+    spans = exporter.get_finished_spans()
+    assert spans
+    assert {s.attributes.get("session.id") for s in spans} == {"bubble-watch-2026-09-18"}
+
+
+def test_the_run_publishes_its_session_key_to_the_tool_server(traced, tmp_path):
+    """The tool server is a different process, so it cannot derive the key — it is handed over."""
+    from bubble_watch.config import load_settings
+    from bubble_watch.harness import child_env
+    from bubble_watch.orchestrator import session_ids
+
+    _, grouping = session_ids(DAY)
+    env = child_env(load_settings(tmp_path / "none.env"), "00-a-b-01", session_id=grouping)
+    assert env["BUBBLE_WATCH_SESSION_ID"] == "bubble-watch-2026-09-18"

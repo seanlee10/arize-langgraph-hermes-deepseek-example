@@ -1,6 +1,0 @@
-#!/bin/sh
-# Hermes ACP adapter launcher: dsh drives this as a subagent over Agent Client Protocol on stdio.
-# Runs the repo checkout (not an installed hermes), which carries the Tavily web backend and the
-# observability/arize plugin. stdout is reserved for JSON-RPC — never echo to it here.
-REPO="${HERMES_REPO:-$HOME/projects/hermes-agent}"
-exec "$REPO/.venv/bin/hermes-acp" "$@"

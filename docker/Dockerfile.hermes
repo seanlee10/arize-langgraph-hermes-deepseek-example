@@ -1,0 +1,26 @@
+# Hermes Agent, driven over its one-shot CLI (`hermes chat -Q`) by the bubble-watch tool server.
+# Not the ACP adapter: that path fires no plugin hooks, so Hermes would not trace itself.
+# The build context is the HERMES CHECKOUT, not this repo:
+#   docker build -f docker/Dockerfile.hermes -t bubble-watch/hermes ~/projects/hermes-agent
+FROM python:3.13-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+WORKDIR /hermes
+ENV UV_LINK_MODE=copy \
+    UV_PROJECT_ENVIRONMENT=/opt/venv \
+    PATH=/opt/venv/bin:$PATH
+
+COPY . /hermes
+# arize-otel is not a default Hermes dependency; the observability/arize plugin needs it to export.
+RUN uv sync --frozen --no-dev && uv pip install arize-otel
+
+# The isolated analyst home is mounted in by bin/hermes-docker; bubble-watch wrote its config.
+ENV HERMES_HOME=/work/.hermes-analyst \
+    TIRITH_ENABLED=false
+WORKDIR /work
+
+# `hermes chat -Q` prints the answer on stdout and its session id on stderr.
+ENTRYPOINT ["hermes"]
