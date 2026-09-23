@@ -151,3 +151,26 @@ def test_doctor_explains_a_failing_hermes_check(tmp_path, monkeypatch):
     check = checks["Hermes runtime"]
     assert check[1] is False
     assert "uv sync" in check[3]   # names the fix, not just the error
+
+
+def test_doctor_treats_a_missing_search_backend_as_a_real_problem(tmp_path, monkeypatch):
+    """With no search key, dsh falls back to a backend it has no credentials for: the call fails
+    after ~147s every run and the analysts research by fetching pages one at a time. That is a
+    required check, not an optional nicety."""
+    for name in ("TAVILY_API_KEY", "EXA_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    checks = _checks(_doctor_env(tmp_path, monkeypatch))
+    check = checks["web search backend"]
+    assert check[1] is False
+    assert check[2] is True                  # required
+    assert "TAVILY_API_KEY" in check[3]
+
+
+def test_doctor_is_satisfied_by_either_search_backend(tmp_path, monkeypatch):
+    settings = _doctor_env(tmp_path, monkeypatch)
+    monkeypatch.setenv("EXA_API_KEY", "exa-k")
+    assert _checks(load_settings(tmp_path / "none.env"))["web search backend"][1] is True
+    monkeypatch.delenv("EXA_API_KEY")
+    monkeypatch.setenv("TAVILY_API_KEY", "tvly-k")
+    assert _checks(load_settings(tmp_path / "none.env"))["web search backend"][1] is True
+    assert settings is not None

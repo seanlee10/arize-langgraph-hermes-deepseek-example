@@ -324,7 +324,8 @@ run. Measured breakdown of one run:
 | `web_search` | 1 | 104s | 18% |
 | everything deterministic | — | ~2s | 0% |
 
-**Set `TAVILY_API_KEY`.** Without a search backend, dsh's `web_search` fails after ~100 seconds
+**Set `TAVILY_API_KEY`** — `doctor` treats this as a required check, not an optional one. Without a
+search backend, dsh's `web_search` fails after ~147 seconds
 (`DeepSeek search has no API key`) and both the orchestrator and Hermes fall back to fetching pages
 one at a time — which is what those 35 `web_fetch` calls are. Tavily is wired for dsh through
 `dsh/plugins/web-search-tavily.mjs` and picked up natively by Hermes, so one key fixes both.

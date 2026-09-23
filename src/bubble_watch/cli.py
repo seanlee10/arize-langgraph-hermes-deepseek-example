@@ -93,11 +93,17 @@ def doctor_checks(settings: Settings, client: httpx.Client,
                    "set" if "XAI_API_KEY" not in missing else "missing in .env"))
     for name, value, why in (("ARIZE_SPACE_ID", settings.arize_space_id, "tracing"),
                              ("ARIZE_API_KEY", settings.arize_api_key, "tracing"),
-                             ("TAVILY_API_KEY", settings.tavily_api_key, "web search for dsh and Hermes"),
-                             ("EXA_API_KEY", settings.exa_api_key, "web search fallback"),
                              ("ALPHAVANTAGE_API_KEY", settings.alphavantage_api_key,
                               "primary market data (EOD closes + options)")):
         checks.append((f"env {name}", bool(value), False, f"set ({why})" if value else f"not set — {why} unavailable"))
+    # Not optional in practice: with neither key, dsh falls back to a backend it has no
+    # credentials for. The call fails after ~147s on every run, and both analysts then research by
+    # fetching pages one at a time instead of searching.
+    search = settings.tavily_api_key or settings.exa_api_key
+    checks.append(("web search backend", bool(search), True,
+                   "Tavily" if settings.tavily_api_key else "Exa" if search else
+                   "none — set TAVILY_API_KEY (or EXA_API_KEY); without it every run wastes "
+                   "~147s on a search that cannot succeed"))
     state = state_path(settings)
     checks.append(("state file", state.exists(), True, str(state) if state.exists() else "run `bubble-watch seed`"))
     checks.append(("dsh launcher", os.access(settings.dsh_bin, os.X_OK), True, settings.dsh_bin))
