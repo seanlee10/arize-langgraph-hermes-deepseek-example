@@ -1,0 +1,95 @@
+# bubble-watch overlay TEMPLATE — containers mode. Same two seams as the local template, but each
+# sibling runtime runs in its own container and dsh reaches it by spawning `docker run -i`.
+#
+# Why this shape: `dsh-subagent-acp` is spawn-only (`command` is required; there is no URL form), so
+# whatever dsh spawns must be a LOCAL process. `docker run -i` is that process — it proxies stdio to
+# a container, which is exactly what ACP and MCP stdio already expect. Nothing about the protocols
+# changes; only who is on the other end of the pipe.
+#
+# Trace context crosses in two hops, because a container does not inherit the parent's environment:
+#   1. `config.env` puts the value on the `docker` CLI process (both backends scrub ambient
+#      credential-shaped variables, so inheritance alone would lose XAI_API_KEY and friends).
+#   2. `-e NAME` (no `=value`) forwards that value from the CLI into the container.
+# The run's traceparent is therefore never baked into this file — it is whatever dsh's own
+# environment holds for that run, which the driver set before launching dsh.
+#
+# render_orchestrator_patch() fills in:
+#   {hermes_image} {mcp_image}   images to run
+#   {host_root}                  project root ON THE HOST (the daemon resolves -v sources, and a
+#                                sibling container's mount source is always a host path)
+#   {workdir}                    the project root as every container sees it
+
+- insert:
+    - id: subagent-acp-hermes
+      name: '@deepseek-ai/dsh-subagent-acp'
+      config:
+        providerName: hermes
+        command: docker
+        args:
+          - 'run'
+          - '-i'
+          - '--rm'
+          - '-e'
+          - 'XAI_API_KEY'
+          - '-e'
+          - 'TAVILY_API_KEY'
+          - '-e'
+          - 'EXA_API_KEY'
+          - '-e'
+          - 'TIRITH_ENABLED'
+          - '-e'
+          - 'HERMES_ARIZE_TRACEPARENT'
+          - '-e'
+          - 'HERMES_ARIZE_SPACE_ID'
+          - '-e'
+          - 'HERMES_ARIZE_API_KEY'
+          - '-e'
+          - 'HERMES_ARIZE_PROJECT_NAME'
+          - '-e'
+          - 'HERMES_ARIZE_COLLECTOR_ENDPOINT'
+          - '-v'
+          - '{host_root}/.hermes-analyst:{workdir}/.hermes-analyst'
+          - '{hermes_image}'
+        cwd: '{workdir}'
+        permission: reject
+{hermes_env}
+
+    # See the local template: 'provider-managed' is mandatory, the ACP backend has no depthLimit.
+    - id: tool-hermes-analyst
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: hermes
+        toolName: hermes_analyst
+        maxDepth: provider-managed
+
+    - id: mcp-bubble
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: bubble
+        transport: stdio
+        command: docker
+        args:
+          - 'run'
+          - '-i'
+          - '--rm'
+          - '-e'
+          - 'TRACEPARENT'
+          - '-e'
+          - 'ARIZE_SPACE_ID'
+          - '-e'
+          - 'ARIZE_API_KEY'
+          - '-e'
+          - 'ARIZE_PROJECT_NAME'
+          - '-e'
+          - 'ARIZE_COLLECTOR_ENDPOINT'
+          - '-e'
+          - 'ALPHAVANTAGE_API_KEY'
+          - '-v'
+          - '{host_root}/state:{workdir}/state'
+          - '-v'
+          - '{host_root}/reports:{workdir}/reports'
+          - '{mcp_image}'
+        cwd: '{workdir}'
+        failOnStartupError: true
+        toolCallTimeoutMs: 180000
+{mcp_env}

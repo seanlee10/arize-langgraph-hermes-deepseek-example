@@ -1,0 +1,64 @@
+# bubble-watch overlay TEMPLATE — local mode. dsh orchestrates the daily run, delegating research to
+# Hermes over ACP and the deterministic computation to the bubble-watch MCP tool server.
+#
+# render_orchestrator_patch() writes it into DSH_HOME with the placeholders filled in:
+#   {hermes_acp_bin}    absolute path of bin/hermes-acp (the Hermes repo checkout's ACP adapter)
+#   {hermes_home}       isolated HERMES_HOME, so the analyst never sees ~/.hermes or its platforms
+#   {project_root}      the bubble-watch checkout; the MCP server's project and working directory
+#   {uv_bin}            the uv executable that launches the MCP server
+# The two `env:` blocks are generated rather than substituted from a literal — see below.
+#
+# TWO THINGS HERE ARE LOAD-BEARING, and both fail silently if you get them wrong.
+#
+# 1. dsh-subagent-acp and dsh-mcp-client are NOT in dsh's base bundle. They must be installed into
+#    the profile package tree first (`bubble-watch install-plugins`; doctor checks it). Do not
+#    "fix" an unresolved name by pointing it at the checkout's lib/index.js — that loads a second
+#    copy of the plugin and its config validation then fails against the bundle's copy.
+#
+# 2. The `env:` blocks are GENERATED and list only variables that actually have a value.
+#    `!!js process.env.FOO` on an unset FOO evaluates to `undefined`, and dsh-mcp-client's Config is
+#    a z.union whose branch rejects an env dict containing one: the row fails validation and the
+#    plugin never activates. The error's "but got" JSON hides the cause, because JSON.stringify
+#    drops undefined-valued keys. dsh-subagent-acp's Config is a plain z.object and tolerates it,
+#    so a mistake here makes the MCP tools vanish while Hermes still works.
+#
+# TRACEPARENT is resolved once per run: the Python driver opens the root span BEFORE launching dsh,
+# so both children parent their own spans on it. This is the only injection point the ACP and MCP
+# backends offer — their `env` is static, read when the composition is loaded.
+
+- insert:
+    # Hermes Agent as an out-of-process ACP child: its own runtime, model, tools and session.
+    # Hermes' observability/arize plugin reads ITS OWN variable names (HERMES_ARIZE_*), not the
+    # OTel ones, which is why the two children are given different traceparent variables.
+    - id: subagent-acp-hermes
+      name: '@deepseek-ai/dsh-subagent-acp'
+      config:
+        providerName: hermes
+        command: '{hermes_acp_bin}'
+        permission: reject
+{hermes_env}
+
+    # The model-facing delegation tool. maxDepth MUST be 'provider-managed': the ACP backend
+    # advertises no depthLimit capability, so a numeric cap — and the host default that a missing
+    # key falls back to — is rejected when the composition loads. Recursion is bounded instead by
+    # the child itself: its isolated HERMES_HOME enables the web toolset only, so it has no
+    # delegation tools to recurse with. dsh-tool-subagent IS bundled, so it resolves by name.
+    - id: tool-hermes-analyst
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: hermes
+        toolName: hermes_analyst
+        maxDepth: provider-managed
+
+    # The deterministic tools: market data, signal computation, gaps, persistence.
+    - id: mcp-bubble
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: bubble
+        transport: stdio
+        command: '{uv_bin}'
+        args: ['run', '--project', '{project_root}', 'bubble-watch', 'mcp']
+        cwd: '{project_root}'
+        failOnStartupError: true
+        toolCallTimeoutMs: 180000
+{mcp_env}

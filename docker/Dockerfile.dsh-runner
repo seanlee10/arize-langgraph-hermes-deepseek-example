@@ -1,0 +1,20 @@
+# DeepSeek Harness: the orchestrator. The Python SDK speaks JSON-RPC to this over stdio, via
+# bin/dsh-docker. It spawns its own siblings, so it carries the Docker CLI and needs the socket.
+# The build context is the DSH CHECKOUT, not this repo:
+#   docker build -f docker/Dockerfile.dsh-runner -t bubble-watch/dsh-runner ~/projects/deepseek-harness
+FROM node:24-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends docker.io \
+    && rm -rf /var/lib/apt/lists/*
+RUN corepack enable
+
+WORKDIR /dsh
+COPY . /dsh
+RUN pnpm install --frozen-lockfile && pnpm run build
+
+# /work is the mounted project root: DSH_HOME (.dsh) with the rendered patch layers and the
+# installed skill, plus state/ and reports/. launch_paths() names everything under it.
+WORKDIR /work
+ENV DSH_HOME=/work/.dsh
+
+ENTRYPOINT ["node", "/dsh/apps/cli/lib/bin.js"]

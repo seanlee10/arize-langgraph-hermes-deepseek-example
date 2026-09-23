@@ -6,7 +6,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 
 Freshness = Literal["EOD", "latest_snapshot", "late_session_last", "derived", "N/A"]
 Condition = Literal["true", "false", "partial", "unknown"]
@@ -51,40 +51,6 @@ class Verdict(str, Enum):
     CONFIRMED = "CONFIRMED"
 
 
-# Most cautious first: the verdict that keeps the bubble warning most active.
-CAUTION_ORDER = [Verdict.CONFIRMED, Verdict.TRIGGERED, Verdict.TRIGGERED_DE_CONFIRMING,
-                 Verdict.TRIGGERED_FURTHER_DE_CONFIRMING, Verdict.NOT_TRIGGERED]
-
-
-def most_cautious(*verdicts: Verdict) -> Verdict:
-    return min(verdicts, key=CAUTION_ORDER.index)
-
-
-class Catalyst(BaseModel):
-    headline: str
-    url: str
-    published: dt.date | None = None
-    direction: Literal["bearish", "bullish", "neutral"]
-    weight: Literal["low", "med", "high"] = "med"
-    rationale_ko: str = ""
-
-
-class AnalystView(BaseModel):
-    score: float
-    score_delta_reasoning_ko: str
-    verdict: Verdict
-    catalysts: list[Catalyst] = Field(default_factory=list)
-    tape_read_ko: str
-    watch_conditions_ko: str
-    confidence: Literal["low", "med", "high"] = "med"
-    rebuttal_ko: str | None = None
-
-    @field_validator("score", mode="before")
-    @classmethod
-    def _clamp(cls, v: object) -> float:
-        return round1(min(10.0, max(0.0, float(v))))  # type: ignore[arg-type]
-
-
 class IVCompare(BaseModel):
     current: float | None = None
     prior: float | None = None
@@ -103,21 +69,6 @@ class Signals(BaseModel):
     conditions: dict[str, Condition] = Field(default_factory=dict)
 
 
-class MergedCatalyst(Catalyst):
-    cited_by: list[str] = Field(default_factory=list)
-
-
-class Reconciliation(BaseModel):
-    mode: Literal["agree", "agree_after_rebuttal", "disagree", "single"]
-    score: float
-    verdict: Verdict
-    scores: dict[str, float]
-    verdicts: dict[str, Verdict]
-    rebuttal_round: bool = False
-    catalysts: list[MergedCatalyst] = Field(default_factory=list)
-    flags: list[str] = Field(default_factory=list)
-
-
 class DailyRecord(BaseModel):
     date: dt.date
     closes: dict[str, Close] = Field(default_factory=dict)
@@ -126,8 +77,6 @@ class DailyRecord(BaseModel):
     score: float | None = None
     score_delta: float | None = None
     verdict: Verdict | None = None
-    analyst_views: dict[str, AnalystView] = Field(default_factory=dict)
-    reconciliation: Reconciliation | None = None
     report_path: str | None = None
     note: str = ""
 

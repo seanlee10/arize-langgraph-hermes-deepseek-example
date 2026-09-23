@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import os
-import secrets
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -17,16 +16,17 @@ REQUIRED = ("XAI_API_KEY",)
 class Settings:
     xai_api_key: str
     xai_base_url: str
-    hermes_api_url: str
-    hermes_api_key: str
     hermes_model: str | None
     hermes_home: Path
-    hermes_mode: str
-    hermes_bin: str
+    hermes_acp_bin: str
     hermes_repo: str
     dsh_bin: str
     dsh_repo: str
     dsh_home: str
+    deploy_mode: str
+    host_root: str
+    mcp_image: str
+    hermes_image: str
     dsh_provider: str
     dsh_model: str
     writer_model: str
@@ -41,6 +41,10 @@ class Settings:
     exa_api_key: str
     alphavantage_api_key: str
 
+    @property
+    def dsh_home_path(self) -> Path:
+        return Path(self.dsh_home)
+
 
 def _env(name: str, default: str = "") -> str:
     value = os.environ.get(name, default).strip()
@@ -53,19 +57,22 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
     return Settings(
         xai_api_key=_env("XAI_API_KEY"),
         xai_base_url=_env("XAI_BASE_URL", "https://api.x.ai/v1"),
-        hermes_api_url=_env("HERMES_API_URL", "http://localhost:8642/v1"),
-        hermes_api_key=_env("HERMES_API_KEY"),
-        # Unset: the Hermes gateway uses its own configured model (set it to grok-4.6 there).
+        # Unset: the Hermes ACP child falls back to the orchestrator's model.
         hermes_model=_env("HERMES_ANALYST_MODEL") or None,
         hermes_home=Path(_env("HERMES_ANALYST_HOME", str(PROJECT_ROOT / ".hermes-analyst"))),
-        # oneshot: a `hermes chat` subprocess per call; gateway: HTTP to `bubble-watch hermes-gateway` (e.g. on EC2)
-        hermes_mode=_env("HERMES_MODE", "oneshot"),
-        # the repo checkout: Tavily web backend + the bundled observability/arize plugin
-        hermes_bin=_env("HERMES_BIN", str(PROJECT_ROOT / "bin" / "hermes")),
+        # the repo checkout's ACP adapter: dsh drives it as a subagent over JSON-RPC on stdio
+        hermes_acp_bin=_env("HERMES_ACP_BIN", str(PROJECT_ROOT / "bin" / "hermes-acp")),
         hermes_repo=_env("HERMES_REPO", str(Path.home() / "projects" / "hermes-agent")),
         dsh_bin=_env("DSH_BIN", str(PROJECT_ROOT / "bin" / "dsh")),
         dsh_repo=_env("DSH_REPO", str(Path.home() / "projects" / "deepseek-harness")),
         dsh_home=_env("DSH_HOME", str(PROJECT_ROOT / ".dsh")),
+        # local: dsh spawns the siblings directly. containers: it spawns `docker run -i` for each.
+        deploy_mode=_env("BUBBLE_WATCH_DEPLOY", "local"),
+        # the project root ON THE HOST: a sibling container's -v source is resolved by the daemon,
+        # so it is a host path even when the command is issued from inside a container.
+        host_root=_env("BUBBLE_WATCH_HOST_ROOT", str(PROJECT_ROOT)),
+        mcp_image=_env("BUBBLE_WATCH_MCP_IMAGE", "bubble-watch/mcp-tools"),
+        hermes_image=_env("BUBBLE_WATCH_HERMES_IMAGE", "bubble-watch/hermes-acp"),
         dsh_provider=_env("DSH_PROVIDER", "xai"),
         dsh_model=_env("DSH_ANALYST_MODEL", DEFAULT_MODEL),
         writer_model=_env("WRITER_MODEL", DEFAULT_MODEL),
@@ -84,19 +91,3 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
 
 def missing_required(settings: Settings) -> list[str]:
     return [name for name in REQUIRED if not {"XAI_API_KEY": settings.xai_api_key}[name]]
-
-
-def resolve_hermes_key(settings: Settings) -> str:
-    """The analyst gateway's API_SERVER_KEY: HERMES_API_KEY if set, else a random key generated once
-    into <hermes_home>/api_server.key (0600). Shared by `hermes-gateway` and the Hermes client."""
-    if settings.hermes_api_key:
-        return settings.hermes_api_key
-    path = settings.hermes_home / "api_server.key"
-    if path.exists():
-        return path.read_text().strip()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    key = secrets.token_urlsafe(32)
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    with os.fdopen(fd, "w") as f:
-        f.write(key + "\n")
-    return key

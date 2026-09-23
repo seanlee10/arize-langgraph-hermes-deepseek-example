@@ -1,5 +1,0 @@
-#!/bin/sh
-# Hermes launcher for the bubble-watch analyst: runs the repo checkout (not the installed CLI), which
-# has the Tavily web backend and the observability/arize plugin bundled. DSH_REPO's sibling default.
-REPO="${HERMES_REPO:-$HOME/projects/hermes-agent}"
-exec "$REPO/.venv/bin/hermes" "$@"
