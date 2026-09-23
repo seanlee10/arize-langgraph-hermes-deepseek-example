@@ -100,3 +100,32 @@ def test_hermes_analyst_tool_forwards_the_session_for_a_rebuttal(tmp_path, monke
     _call(build_server(_deps(tmp_path)), "hermes_analyst",
           {"task": "rebut", "session_id": "s-1"})
     assert seen["session_id"] == "s-1"
+
+
+def test_hermes_tool_records_its_span_with_the_servers_tracer(tmp_path):
+    """The per-call `hermes analyst` span only exists if the tool is given a real tracer. Falling
+    back to the global one silently produces a non-recording span — Hermes then inherits the
+    ambient context and parents on the run root instead, which still *looks* connected."""
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+    import bubble_watch.mcp_server as srv
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+
+    seen = {}
+
+    def fake(settings, task, session_id="", *, tracer=None, runner=None):
+        seen["tracer"] = tracer
+        return {"text": "t", "session_id": "s"}
+
+    srv_deps = _deps(tmp_path)
+    object.__setattr__(srv_deps, "tracer", provider.get_tracer("t"))
+    from unittest import mock
+    with mock.patch.object(srv, "hermes_analyst", fake):
+        _call(build_server(srv_deps), "hermes_analyst", {"task": "x"})
+    assert seen["tracer"] is not None, "the tool must be handed the server's tracer"
+    assert seen["tracer"] is srv_deps.tracer

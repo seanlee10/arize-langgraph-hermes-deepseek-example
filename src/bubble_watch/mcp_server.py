@@ -77,7 +77,7 @@ def build_server(deps: ToolDeps) -> MCPServer:
         proceed on your own judgement alone and disclose that in the report.
         """
         try:
-            return hermes_analyst(deps.settings, task, session_id)
+            return hermes_analyst(deps.settings, task, session_id, tracer=deps.tracer)
         except HermesError as exc:
             raise ValueError(f"hermes analyst unavailable: {exc}") from None
 

@@ -17,7 +17,7 @@ from .market_data.base import GapFill, MarketDataProvider, MarketSnapshot, apply
 from .models import DailyRecord, Verdict, WatchState, round1
 from .signals import compute_signals
 from .state_store import load_state, save_state
-from .tracing import current_trace_id
+from .tracing import current_trace_id, get_tracer
 
 
 @dataclass
@@ -26,6 +26,11 @@ class ToolDeps:
     state_path: Path
     #: Only the Hermes analyst needs these; the deterministic tools never read them.
     settings: Settings = field(default_factory=load_settings)
+    #: The tracer the analyst opens its per-call span with. It must be the configured provider's:
+    #: `setup_tracing` deliberately does not set the global one, so falling back to
+    #: `trace.get_tracer()` yields a non-recording span, the span never reaches Arize, and Hermes
+    #: silently parents on the run root instead of on the call.
+    tracer: Any = field(default_factory=lambda: get_tracer(None))
     # One run is one dsh session, so the day's snapshot is held here between prepare_brief,
     # apply_gap_fills and save_run. A cold cache (server restart) re-fetches rather than failing.
     snapshots: dict[dt.date, MarketSnapshot] = field(default_factory=dict)

@@ -72,8 +72,9 @@ def market_provider(settings: Settings):
     return YFinanceProvider()
 
 
-def tool_deps(settings: Settings) -> ToolDeps:
-    return ToolDeps(market=market_provider(settings), state_path=state_path(settings))
+def tool_deps(settings: Settings, provider: Any = None) -> ToolDeps:
+    return ToolDeps(market=market_provider(settings), state_path=state_path(settings),
+                    tracer=get_tracer(provider))
 
 
 def serve_stdio(server) -> int:
@@ -181,7 +182,7 @@ def cmd_mcp(args, settings: Settings) -> int:
     try:
         # The grouping key is handed over by the driver: a different process cannot derive it.
         with session_context(os.environ.get("BUBBLE_WATCH_SESSION_ID", "")):
-            return serve_stdio(build_server(tool_deps(settings)))
+            return serve_stdio(build_server(tool_deps(settings, provider)))
     finally:
         if token is not None:
             context.detach(token)
