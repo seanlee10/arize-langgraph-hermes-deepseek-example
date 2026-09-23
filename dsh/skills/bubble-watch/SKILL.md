@@ -11,6 +11,18 @@ writing are yours.
 
 Work in English. Only the report itself is written in Korean — it is the product.
 
+## Budget
+
+A run should take minutes, not tens of minutes. Research is the only expensive part, so:
+
+- **Prefer one `web_search` over many `web_fetch` calls.** Fetch a page only when you need something
+  a search result does not already give you.
+- **At most 8 page fetches for your own view.** Hermes is researching in parallel and returns its
+  sources with URLs; verify the claims you actually dispute rather than re-reading everything.
+- **Do not explore the repository.** No `glob`, `grep`, `read`, `bash` or `edit`. The only file you
+  touch is the report you write. Everything you need arrives from `mcp__bubble__*` and the analyst.
+- Keep `todo_write` to one plan at the start, if you use it at all.
+
 ## Absolute rules
 
 1. **Never invent a number.** Closes, returns, IV and put changes come only from what

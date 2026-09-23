@@ -310,6 +310,28 @@ delivered report therefore leads back to its trace.
 The two `bubble-watch-<date>*` ids are split deliberately: dsh rejects a duplicate session id, so it
 needs a fresh one per run, while Arize needs a stable key to keep a day's re-runs grouped.
 
+## Run time
+
+A run is a few minutes, and **almost all of it is research** — the deterministic half (market data,
+LangGraph signal computation, gap application, persistence) takes about **2 seconds** of a 10-minute
+run. Measured breakdown of one run:
+
+| | calls | total | share of wall clock |
+|---|---:|---:|---:|
+| `web_fetch` | 35 | 299s | 51% |
+| `hermes_analyst` (including its LLM call) | 2 | 236s | 40% |
+| `web_search` | 1 | 104s | 18% |
+| everything deterministic | — | ~2s | 0% |
+
+**Set `TAVILY_API_KEY`.** Without a search backend, dsh's `web_search` fails after ~100 seconds
+(`DeepSeek search has no API key`) and both the orchestrator and Hermes fall back to fetching pages
+one at a time — which is what those 35 `web_fetch` calls are. Tavily is wired for dsh through
+`dsh/plugins/web-search-tavily.mjs` and picked up natively by Hermes, so one key fixes both.
+
+The skill also caps the orchestrator's own research (prefer one search over many fetches, at most 8
+page fetches for its own view, no repository exploration) so the two analysts do not duplicate each
+other's work.
+
 ## Hermes stream timeouts
 
 Hermes' stream watchdog arms on the first parsed event and then kills the LLM call after a period of
