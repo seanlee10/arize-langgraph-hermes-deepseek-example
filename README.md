@@ -200,21 +200,20 @@ host paths — a sibling container's mount is resolved by the daemon, wherever t
 
 ## Tracing
 
-One run is one trace in the Arize project `bubble-watch`. The driver opens the root span *before*
-launching dsh, which is what makes a `traceparent` available at composition time — the MCP backend
-reads its `env` once, when the composition loads.
+One run is one trace in the Arize project `bubble-watch`, rooted at the dsh run. The driver opens
+that root span *before* launching dsh, which is what makes a `traceparent` available at composition
+time — the MCP backend reads its `env` once, when the composition loads.
 
 Verified shape of one run (52 spans, single root):
 
 ```
-bubble-watch run                    CHAIN   ← the only root
-├── dsh session                     AGENT   built live from the SDK's on_notification callback
-│   ├── mcp__bubble__prior_state    TOOL
-│   ├── mcp__bubble__prepare_brief  TOOL    real start/end, from event arrival
-│   ├── mcp__bubble__hermes_analyst TOOL    the delegation
-│   ├── mcp__bubble__apply_gap_fills TOOL
-│   ├── mcp__bubble__hermes_analyst TOOL    second view
-│   └── … web_fetch / write / mcp__bubble__save_run
+dsh                                 AGENT   ← the only root: the harness run itself
+├── mcp__bubble__prior_state        TOOL    built live from the SDK's on_notification callback
+├── mcp__bubble__prepare_brief      TOOL    real start/end, from event arrival
+├── mcp__bubble__hermes_analyst     TOOL    the delegation
+├── mcp__bubble__apply_gap_fills    TOOL
+├── mcp__bubble__hermes_analyst     TOOL    second view
+├── … web_fetch / write / mcp__bubble__save_run
 ├── LangGraph                       CHAIN   ← a different process, via TRACEPARENT
 │   ├── fetch_market_data
 │   └── compute_signals
@@ -223,6 +222,13 @@ bubble-watch run                    CHAIN   ← the only root
 │       └── LLM call 1              LLM
 └── LangGraph                       CHAIN   ← second invocation (apply_gap_fills)
 ```
+
+**The root is the dsh run.** dsh cannot open that span itself — it emits OpenTelemetry logs rather
+than spans, and the `traceparent` has to exist *before* it launches, because the MCP composition
+reads its `env` once at load. So the driver opens the root on dsh's behalf and reconstructs dsh's
+tool spans beneath it. An earlier version had a separate `bubble-watch run` wrapper above
+`dsh session`; the two had the same input and nearly the same lifetime, and the only effect was to
+push the harness a level down, so they are now one span.
 
 LangGraph runs in its own process (its own container in containers mode) and its spans still land in
 this trace, because the MCP server adopts the run's `TRACEPARENT` as a remote parent.
@@ -328,9 +334,9 @@ one.
   resume automatically unless told otherwise.
 - The MCP server's spans parent on the run root rather than the tool call that triggered them —
   see Tracing above.
-- **A trace looks broken while a run is in progress.** `bubble-watch run` and `dsh session` stay
-  open for the whole run, so until it ends they have not been exported and every completed child
-  span shows as orphaned ("its parent span is missing"). It resolves when the run finishes. This is
+- **A trace looks broken while a run is in progress.** The root `dsh` span stays open for the whole
+  run, so until it ends it has not been exported and every completed child span shows as orphaned
+  ("its parent span is missing"). It resolves when the run finishes. This is
   inherent to exporting a span at its end, not a wiring fault.
 - The diagrams and trace screenshots under `docs/` predate all of this.
 

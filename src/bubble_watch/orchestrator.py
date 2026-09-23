@@ -92,20 +92,21 @@ def run_day(*, day: dt.date, report_path: Path,
     """
     task = build_task(day, report_path)
     dsh_session, grouping = session_ids(day)
+    # One root span, and it is the dsh run. dsh cannot open it itself — it emits OTel logs rather
+    # than spans, and the traceparent has to exist before it launches, because the MCP composition
+    # reads its `env` once at load. So the driver opens it on dsh's behalf. A second wrapper span
+    # above this one would only push the harness a level down for nothing.
     with session_context(grouping), agent_span(
-            tracer, "bubble-watch run", input_value=task, kind="CHAIN",
-            attributes={"bubble_watch.date": day.isoformat()}) as root:
+            tracer, "dsh", input_value=task,
+            attributes={"bubble_watch.date": day.isoformat(),
+                        "dsh.session_id": dsh_session}) as root:
         harness = _start_harness(harness_for, _traceparent(), grouping)
         builder = DshSpanBuilder(tracer)
         try:
-            with agent_span(tracer, "dsh session", input_value=task,
-                            attributes={"dsh.session_id": dsh_session}) as session:
-                try:
-                    result = harness.run(task, session_id=dsh_session, on_notification=builder)
-                finally:
-                    builder.close()
-                session.set_attribute(OUTPUT, result.final_response or "")
-                session.set_attribute("dsh.tool_call_count", builder.tool_call_count)
+            try:
+                result = harness.run(task, session_id=dsh_session, on_notification=builder)
+            finally:
+                builder.close()
         except OrchestratorError:
             raise
         except Exception as exc:
@@ -120,6 +121,8 @@ def run_day(*, day: dt.date, report_path: Path,
             raise OrchestratorError(f"dsh wrote no report at {report_path}")
         root.set_attribute(OUTPUT, report_path.read_text()[:4000])
         root.set_attribute("bubble_watch.report_path", str(report_path))
+        root.set_attribute("dsh.tool_call_count", builder.tool_call_count)
+        root.set_attribute("dsh.final_response", (result.final_response or "")[:4000])
         return RunOutcome(report_path=report_path, final_response=result.final_response or "",
                           finish_reason=finish_reason, tool_call_count=builder.tool_call_count,
                           session_id=getattr(result, "session_id", "") or "")

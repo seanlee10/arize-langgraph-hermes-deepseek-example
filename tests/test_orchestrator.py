@@ -110,8 +110,23 @@ def test_run_day_hands_the_root_traceparent_to_the_harness(traced, tmp_path):
     report = tmp_path / "reports" / "2026-09-18-NVDA.md"
     _, seen = _run(tracer, FakeHarness(report_path=report), report)
     assert re.fullmatch(r"00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}", seen[0])
-    root = next(s for s in exporter.get_finished_spans() if s.name == "bubble-watch run")
+    root = next(s for s in exporter.get_finished_spans() if s.name == "dsh")
     assert f"{root.context.trace_id:032x}" in seen[0]
+
+
+def test_the_trace_root_is_the_dsh_run_itself(traced, tmp_path):
+    """dsh cannot open a root span — it emits OTel logs, not spans, and the traceparent must exist
+    before it launches. So the driver opens it, but the span represents the dsh run: one root, no
+    wrapper layer above it."""
+    exporter, tracer = traced
+    report = tmp_path / "reports" / "2026-09-18-NVDA.md"
+    _run(tracer, FakeHarness(report_path=report), report)
+    roots = [s for s in exporter.get_finished_spans() if s.parent is None]
+    assert [s.name for s in roots] == ["dsh"]
+    root = roots[0]
+    assert root.attributes["openinference.span.kind"] == "AGENT"
+    assert root.attributes["dsh.session_id"].startswith("bubble-watch-2026-09-18-")
+    assert root.attributes["bubble_watch.report_path"] == str(report)
 
 
 def test_run_day_builds_dsh_tool_spans_under_a_session_span(traced, tmp_path):
@@ -124,8 +139,8 @@ def test_run_day_builds_dsh_tool_spans_under_a_session_span(traced, tmp_path):
     outcome, _ = _run(tracer, FakeHarness(report_path=report, notifications=notifications), report)
     spans = {s.name: s for s in exporter.get_finished_spans()}
     assert outcome.tool_call_count == 2
-    assert spans["mcp__bubble__prepare_brief"].parent.span_id == spans["dsh session"].context.span_id
-    assert spans["dsh session"].parent.span_id == spans["bubble-watch run"].context.span_id
+    assert spans["mcp__bubble__prepare_brief"].parent.span_id == spans["dsh"].context.span_id
+    assert spans["dsh"].parent is None
     assert spans["hermes_analyst"].attributes["openinference.span.kind"] == "TOOL"
 
 
@@ -136,7 +151,7 @@ def test_run_day_closes_the_harness_and_marks_the_span_when_dsh_fails(traced, tm
     with pytest.raises(OrchestratorError, match="stdout closed"):
         _run(tracer, harness, report)
     assert harness.closed
-    root = next(s for s in exporter.get_finished_spans() if s.name == "bubble-watch run")
+    root = next(s for s in exporter.get_finished_spans() if s.name == "dsh")
     assert root.status.status_code == StatusCode.ERROR
 
 
@@ -151,8 +166,8 @@ def test_each_run_of_a_day_gets_its_own_dsh_session(traced, tmp_path):
         _run(tracer, harness, report)
         seen.append(harness.calls[0][1])
     assert seen[0] != seen[1]
-    session_spans = [s for s in exporter.get_finished_spans() if s.name == "dsh session"]
-    assert {s.attributes["session.id"] for s in session_spans} == {"bubble-watch-2026-09-18"}
+    roots = [s for s in exporter.get_finished_spans() if s.parent is None]
+    assert {s.attributes["session.id"] for s in roots} == {"bubble-watch-2026-09-18"}
 
 
 def test_every_span_carries_the_arize_session_key(traced, tmp_path):
