@@ -23,8 +23,15 @@ The confirmed-data layer of the NVDA Bubble Signal Watch.
   them, then pass them to `apply_gap_fills` with a source URL and a freshness label. A value
   without a source is rejected.
 - A null `signals` means the ticker's own close is still missing. Fill that gap first.
-- Delegate web research and missing-value lookups to `hermes_analyst`. It is an independent
-  analyst, so take its view before you tell it yours.
+"""
+
+HERMES_INSTRUCTIONS = """\
+An independent senior analyst for the NVDA Bubble Signal Watch, running in its own process with its
+own session and toolset, and tracing itself into this run's trace.
+
+- Give it the computed figures verbatim and tell it not to recompute them.
+- Take its view before you tell it yours: it is meant to be a second opinion, not an echo.
+- Keep the `session_id` it returns and pass it back for the rebuttal round.
 """
 
 _DATE = Annotated[str, Field(description="Trading day to act on (YYYY-MM-DD)")]
@@ -59,28 +66,6 @@ def build_server(deps: ToolDeps) -> MCPServer:
         """
         return apply_gap_fills(deps, date, fills)
 
-    @server.tool(name="hermes_analyst")
-    def _hermes_analyst(
-        task: Annotated[str, Field(description=(
-            "The task to send the Hermes analyst. Say exactly what you need, the output format you "
-            "want, and that every claim needs a source URL. Paste computed figures in verbatim and "
-            "tell it not to recompute them."))],
-        session_id: Annotated[str, Field(description=(
-            "A session_id returned by an earlier call. Passing it continues the same conversation "
-            "- use it for the rebuttal round so you send only the opposing view, not the whole "
-            "brief again."))] = "",
-    ) -> dict[str, Any]:
-        """Delegate to the independent Hermes analyst: web research, missing values, its own view.
-
-        It runs in its own process, session and toolset, and traces itself. Keep the returned
-        session_id and pass it back for the rebuttal round. On failure this returns an error:
-        proceed on your own judgement alone and disclose that in the report.
-        """
-        try:
-            return hermes_analyst(deps.settings, task, session_id, tracer=deps.tracer)
-        except HermesError as exc:
-            raise ValueError(f"hermes analyst unavailable: {exc}") from None
-
     @server.tool(name="prior_state")
     def _prior_state(date: _DATE) -> dict[str, Any]:
         """The previous records (score, verdict, note). Use them for the score delta and continuity."""
@@ -101,5 +86,40 @@ def build_server(deps: ToolDeps) -> MCPServer:
         Call this last, after the report is written.
         """
         return save_run(deps, date, score=score, verdict=verdict, note=note, report_path=report_path)
+
+    return server
+
+
+def build_hermes_server(deps: ToolDeps) -> MCPServer:
+    """The analyst on its own, so it can run as its own peer container.
+
+    Split from the deterministic tools deliberately: each runtime is then one hop from the
+    orchestrator, and the tool server never spawns a sibling container — so it needs no Docker
+    socket. The per-call span is opened here, in whichever server handles the call, so the trace
+    shape is identical either way.
+    """
+    server = MCPServer(name="bubble-watch-hermes", instructions=HERMES_INSTRUCTIONS)
+
+    @server.tool(name="analyst")
+    def _analyst(
+        task: Annotated[str, Field(description=(
+            "The task to send the analyst. Say exactly what you need, the output format you want, "
+            "and that every claim needs a source URL. Paste computed figures in verbatim and tell "
+            "it not to recompute them."))],
+        session_id: Annotated[str, Field(description=(
+            "A session_id returned by an earlier call. Passing it continues the same conversation "
+            "- use it for the rebuttal round so you send only the opposing view, not the whole "
+            "brief again."))] = "",
+    ) -> dict[str, Any]:
+        """Delegate to the independent Hermes analyst: web research, missing values, its own view.
+
+        It runs in its own process, session and toolset, and traces itself. Keep the returned
+        session_id and pass it back for the rebuttal round. On failure this returns an error:
+        proceed on your own judgement alone and disclose that in the report.
+        """
+        try:
+            return hermes_analyst(deps.settings, task, session_id, tracer=deps.tracer)
+        except HermesError as exc:
+            raise ValueError(f"hermes analyst unavailable: {exc}") from None
 
     return server

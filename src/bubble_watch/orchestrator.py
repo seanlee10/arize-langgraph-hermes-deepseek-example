@@ -50,7 +50,7 @@ First read the `bubble-watch` skill with the `skill` tool, then follow the proce
 
 Rules:
 - Every figure must come from an `mcp__bubble__*` tool. Never compute or recall a number yourself.
-- Delegate web research and missing-value lookups to `mcp__bubble__hermes_analyst`, form your own
+- Delegate web research and missing-value lookups to `mcp__hermes__analyst`, form your own
   independent view, then reconcile the two.
 - Write the report in KOREAN to the path above, then record the result with
   `mcp__bubble__save_run`.

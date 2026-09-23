@@ -6,6 +6,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 HERMES_REPO="${HERMES_REPO:-$HOME/projects/hermes-agent}"
 DSH_REPO="${DSH_REPO:-$HOME/projects/deepseek-harness}"
 
+# mcp-tools first: the hermes image copies the bubble-watch venv out of it.
 echo "==> bubble-watch/mcp-tools   (context: $ROOT)"
 docker build -f "$ROOT/docker/Dockerfile.mcp-tools" -t bubble-watch/mcp-tools "$ROOT"
 

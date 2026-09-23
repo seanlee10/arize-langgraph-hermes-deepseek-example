@@ -19,10 +19,10 @@ def _call(server, name, arguments):
     return asyncio.run(server.call_tool(name, arguments))
 
 
-def test_server_exposes_the_deterministic_tools_and_the_analyst(tmp_path):
+def test_server_exposes_the_deterministic_tools(tmp_path):
     server = build_server(_deps(tmp_path))
     names = {tool.name for tool in asyncio.run(server.list_tools())}
-    assert names == {"prepare_brief", "apply_gap_fills", "prior_state", "save_run", "hermes_analyst"}
+    assert names == {"prepare_brief", "apply_gap_fills", "prior_state", "save_run"}
 
 
 def test_every_tool_describes_itself_for_the_model(tmp_path):
@@ -72,9 +72,11 @@ def test_everything_the_model_reads_is_english(tmp_path):
     assert hangul == []
 
 
-def test_server_exposes_the_hermes_analyst_tool(tmp_path):
-    names = {t.name for t in asyncio.run(build_server(_deps(tmp_path)).list_tools())}
-    assert "hermes_analyst" in names
+def test_the_analyst_is_served_separately_from_the_deterministic_tools(tmp_path):
+    from bubble_watch.mcp_server import build_hermes_server
+    tools = {t.name for t in asyncio.run(build_server(_deps(tmp_path)).list_tools())}
+    analyst = {t.name for t in asyncio.run(build_hermes_server(_deps(tmp_path)).list_tools())}
+    assert tools.isdisjoint(analyst)
 
 
 def test_hermes_analyst_tool_returns_text_and_session(tmp_path, monkeypatch):
@@ -83,7 +85,8 @@ def test_hermes_analyst_tool_returns_text_and_session(tmp_path, monkeypatch):
     monkeypatch.setattr(srv, "hermes_analyst",
                         lambda settings, task, session_id="", **kw: {"text": f"ok:{task}",
                                                                      "session_id": "s-1"})
-    result = _call(build_server(_deps(tmp_path)), "hermes_analyst", {"task": "research this"})
+    from bubble_watch.mcp_server import build_hermes_server
+    result = _call(build_hermes_server(_deps(tmp_path)), "analyst", {"task": "research this"})
     assert result.structured_content == {"text": "ok:research this", "session_id": "s-1"}
 
 
@@ -97,7 +100,8 @@ def test_hermes_analyst_tool_forwards_the_session_for_a_rebuttal(tmp_path, monke
         return {"text": "t", "session_id": session_id}
 
     monkeypatch.setattr(srv, "hermes_analyst", fake)
-    _call(build_server(_deps(tmp_path)), "hermes_analyst",
+    from bubble_watch.mcp_server import build_hermes_server
+    _call(build_hermes_server(_deps(tmp_path)), "analyst",
           {"task": "rebut", "session_id": "s-1"})
     assert seen["session_id"] == "s-1"
 
@@ -126,6 +130,33 @@ def test_hermes_tool_records_its_span_with_the_servers_tracer(tmp_path):
     object.__setattr__(srv_deps, "tracer", provider.get_tracer("t"))
     from unittest import mock
     with mock.patch.object(srv, "hermes_analyst", fake):
-        _call(build_server(srv_deps), "hermes_analyst", {"task": "x"})
+        _call(srv.build_hermes_server(srv_deps), "analyst", {"task": "x"})
     assert seen["tracer"] is not None, "the tool must be handed the server's tracer"
     assert seen["tracer"] is srv_deps.tracer
+
+
+# --- the analyst as its own server, so it can be its own peer container -------------------------
+
+def test_hermes_server_exposes_only_the_analyst(tmp_path):
+    from bubble_watch.mcp_server import build_hermes_server
+    names = {t.name for t in asyncio.run(build_hermes_server(_deps(tmp_path)).list_tools())}
+    assert names == {"analyst"}
+
+
+def test_hermes_server_analyst_delegates_and_returns_the_session(tmp_path, monkeypatch):
+    import bubble_watch.mcp_server as srv
+    from bubble_watch.mcp_server import build_hermes_server
+
+    monkeypatch.setattr(srv, "hermes_analyst",
+                        lambda settings, task, session_id="", **kw: {"text": f"ok:{task}",
+                                                                    "session_id": "s-1"})
+    result = _call(build_hermes_server(_deps(tmp_path)), "analyst", {"task": "research"})
+    assert result.structured_content == {"text": "ok:research", "session_id": "s-1"}
+
+
+def test_the_deterministic_server_no_longer_hosts_the_analyst(tmp_path):
+    """Split so each runtime can be its own container, one hop from the orchestrator: the tool
+    server then never spawns a sibling and needs no Docker socket."""
+    names = {t.name for t in asyncio.run(build_server(_deps(tmp_path)).list_tools())}
+    assert "hermes_analyst" not in names
+    assert names == {"prepare_brief", "apply_gap_fills", "prior_state", "save_run"}

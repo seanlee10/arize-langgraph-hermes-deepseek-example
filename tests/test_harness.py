@@ -16,15 +16,15 @@ def _settings(tmp_path, monkeypatch, **env):
     return load_settings(tmp_path / "none.env")
 
 
-def test_orchestrator_patch_has_one_child_not_a_subagent(tmp_path, monkeypatch):
-    """Hermes is reached through the tool server, not through dsh's ACP subagent backend: its ACP
-    adapter fires no plugin hooks, so it would not trace itself. See hermes_tool.py."""
+def test_orchestrator_patch_has_two_peer_servers_and_no_subagent(tmp_path, monkeypatch):
+    """One MCP server per runtime, each a direct child of the orchestrator. Hermes is not an ACP
+    subagent: that adapter fires no plugin hooks, so it would not trace itself (hermes_tool.py)."""
     text = Path(render_orchestrator_patch(_settings(tmp_path, monkeypatch))).read_text()
-    rows = [line for line in text.splitlines() if not line.lstrip().startswith("#")]
-    body = "\n".join(rows)
+    body = "\n".join(l for l in text.splitlines() if not l.lstrip().startswith("#"))
     assert "subagent" not in body        # the comment explains why; the composition has none
     assert "hermes-acp" not in body
-    assert body.count("- id:") == 1
+    assert [l.split("- id:")[1].strip() for l in body.splitlines() if "- id:" in l] == [
+        "mcp-bubble", "mcp-hermes"]
 
 
 def test_orchestrator_patch_mounts_the_bubble_watch_mcp_server(tmp_path, monkeypatch):
@@ -37,11 +37,11 @@ def test_orchestrator_patch_mounts_the_bubble_watch_mcp_server(tmp_path, monkeyp
     assert "failOnStartupError: true" in text
 
 
-def test_orchestrator_patch_passes_the_traceparent_to_its_one_child(tmp_path, monkeypatch):
+def test_orchestrator_patch_passes_the_traceparent_to_each_server(tmp_path, monkeypatch):
     settings = _settings(tmp_path, monkeypatch, XAI_API_KEY="k")
     text = Path(render_orchestrator_patch(settings, traceparent="00-a-b-01")).read_text()
     declared = [k for k, _ in re.findall(r"^\s+(\w+): !!js process\.env\.(\w+)$", text, re.MULTILINE)]
-    assert [v for v in declared if v.endswith("TRACEPARENT")] == ["TRACEPARENT"]
+    assert [v for v in declared if v.endswith("TRACEPARENT")] == ["TRACEPARENT", "TRACEPARENT"]
 
 
 def test_orchestrator_patch_is_written_inside_dsh_home(tmp_path, monkeypatch):
@@ -92,7 +92,7 @@ def test_skill_source_is_tracked_and_declares_a_kebab_case_name():
 
 def test_skill_tells_dsh_to_delegate_research_and_never_compute():
     source = (PROJECT_ROOT / "dsh" / "skills" / "bubble-watch" / "SKILL.md").read_text()
-    assert "hermes_analyst" in source
+    assert "mcp__hermes__analyst" in source
     assert "mcp__bubble__prepare_brief" in source
     assert "mcp__bubble__save_run" in source
 

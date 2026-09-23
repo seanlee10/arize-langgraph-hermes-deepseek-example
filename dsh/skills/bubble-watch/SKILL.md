@@ -6,7 +6,7 @@ description: The daily NVDA Bubble Signal Watch procedure — call the confirmed
 # NVDA Bubble Signal Watch — daily procedure
 
 You are both the **orchestrator and the second analyst**. The `mcp__bubble__*` tools compute the
-numbers, `mcp__bubble__hermes_analyst` does the web research, and the judgement, reconciliation and
+numbers, `mcp__hermes__analyst` does the web research, and the judgement, reconciliation and
 writing are yours.
 
 Work in English. Only the report itself is written in Korean — it is the product.
@@ -30,7 +30,7 @@ A run should take minutes, not tens of minutes. Research is the only expensive p
    `N/A`, the report says `N/A`.
 2. **No value without a source.** Anything found by research carries a URL you actually opened and
    a freshness label.
-3. **Never hide a degradation.** If `mcp__bubble__hermes_analyst` failed, or gaps remain, say so in
+3. **Never hide a degradation.** If `mcp__hermes__analyst` failed, or gaps remain, say so in
    the report's provenance section.
 
 ## Procedure
@@ -51,7 +51,7 @@ Delegate each `field` in `gaps`. State **exactly which value you need** and that
 freshness label are required**.
 
 ```
-mcp__bubble__hermes_analyst(task="Find the IV of the 2026-09-18 NVDA $220 put and the SOXL close.
+mcp__hermes__analyst(task="Find the IV of the 2026-09-18 NVDA $220 put and the SOXL close.
                                  Report each value as JSON with its source URL and freshness
                                  (EOD | latest_snapshot | late_session_last).")
 mcp__bubble__apply_gap_fills(date, fills=[{field, value, source_url, freshness}, ...])
@@ -66,7 +66,7 @@ A non-empty `rejected` means that value was not stored. Retry once; if it still 
 not to recompute them.
 
 ```
-mcp__bubble__hermes_analyst(task="<computed signals JSON>. Research the catalysts published since
+mcp__hermes__analyst(task="<computed signals JSON>. Research the catalysts published since
                                  the last record and attach a URL to each. Interpret this tape and
                                  give a Bubble Signal Score (0-10) and a verdict
                                  (NOT_TRIGGERED | TRIGGERED | TRIGGERED_DE_CONFIRMING |
@@ -81,7 +81,7 @@ Hermes answer. Express it in the same score/verdict form.
 - **Agreement**: score difference <= 0.5 **and** identical verdict. Final score is the mean of the
   two; the verdict is the shared one.
 - **Disagreement**: anything else. Run **one rebuttal round** — show
-  `mcp__bubble__hermes_analyst` the opposing view (yours) and let it reconsider, and reconsider
+  `mcp__hermes__analyst` the opposing view (yours) and let it reconsider, and reconsider
   yours in light of its argument. Pass the `session_id` back so it continues the same conversation
   rather than re-reading the whole brief.
   - If you still disagree after that: final score is the mean, and the verdict is the **more

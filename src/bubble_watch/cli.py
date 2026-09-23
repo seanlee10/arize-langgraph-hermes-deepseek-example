@@ -29,7 +29,7 @@ from .harness import (
 )
 from .market_data.alphavantage import AlphaVantageProvider
 from .market_data.yfinance_provider import YFinanceProvider
-from .mcp_server import build_server
+from .mcp_server import build_hermes_server, build_server
 from .mcp_tools import ToolDeps, prepare_brief
 from .orchestrator import OrchestratorError, run_day
 from .state_store import load_state, save_state, seed_state
@@ -189,6 +189,24 @@ def cmd_mcp(args, settings: Settings) -> int:
         shutdown_tracing(provider)
 
 
+def cmd_hermes_mcp(args, settings: Settings) -> int:
+    """Serve the Hermes analyst on stdio, as its own MCP server.
+
+    Separate from `mcp` so each runtime is one hop from the orchestrator and can be its own
+    container; the deterministic tool server then never spawns a sibling and needs no Docker socket.
+    """
+    provider = setup_tracing(settings)
+    parent = remote_parent_context()
+    token = context.attach(parent) if parent is not None else None
+    try:
+        with session_context(os.environ.get("BUBBLE_WATCH_SESSION_ID", "")):
+            return serve_stdio(build_hermes_server(tool_deps(settings, provider)))
+    finally:
+        if token is not None:
+            context.detach(token)
+        shutdown_tracing(provider)
+
+
 def _run_without_agents(settings: Settings, day: dt.date) -> int:
     """Data and signals only: the MCP tools called directly, with no dsh and no LLM anywhere."""
     print(json.dumps(prepare_brief(tool_deps(settings), day.isoformat()), indent=2, ensure_ascii=False))
@@ -241,11 +259,12 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--dry-run", action="store_true", help="write the report but restore the state file")
     run.add_argument("--no-agents", action="store_true", help="data + signals only; no dsh, no LLM calls")
     sub.add_parser("mcp", help="serve the deterministic tools over MCP stdio (dsh spawns this)")
+    sub.add_parser("hermes-mcp", help="serve the Hermes analyst over MCP stdio (dsh spawns this)")
     sub.add_parser("install-plugins", help="install the dsh plugins the base bundle lacks (needs pnpm)")
     args = parser.parse_args(argv)
     settings = load_settings()
     commands = {"seed": cmd_seed, "doctor": cmd_doctor, "run": cmd_run, "mcp": cmd_mcp,
-                "install-plugins": cmd_install_plugins}
+                "hermes-mcp": cmd_hermes_mcp, "install-plugins": cmd_install_plugins}
     return commands[args.cmd](args, settings)
 
 

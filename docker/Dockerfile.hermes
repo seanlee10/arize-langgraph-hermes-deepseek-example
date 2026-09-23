@@ -1,26 +1,39 @@
-# Hermes Agent, driven over its one-shot CLI (`hermes chat -Q`) by the bubble-watch tool server.
+# The Hermes analyst as its own peer container: it serves `bubble-watch hermes-mcp` on stdio and
+# runs Hermes locally inside itself over the one-shot CLI. Nothing spawns a sibling container, so
+# this image needs no Docker socket.
+#
 # Not the ACP adapter: that path fires no plugin hooks, so Hermes would not trace itself.
-# The build context is the HERMES CHECKOUT, not this repo:
-#   docker build -f docker/Dockerfile.hermes -t bubble-watch/hermes ~/projects/hermes-agent
+#
+# It needs BOTH projects, which come from two build contexts. The bubble-watch half is copied from
+# the already-built tool-server image, so build that one first:
+#   docker build -f docker/Dockerfile.mcp-tools -t bubble-watch/mcp-tools .
+#   docker build -f docker/Dockerfile.hermes    -t bubble-watch/hermes ~/projects/hermes-agent
+FROM bubble-watch/mcp-tools AS tools
+
 FROM python:3.13-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends git \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
-WORKDIR /hermes
-ENV UV_LINK_MODE=copy \
-    UV_PROJECT_ENVIRONMENT=/opt/venv \
-    PATH=/opt/venv/bin:$PATH
+# The bubble-watch virtualenv has its prefix baked in, so it must land on the same path it was
+# built at. /work carries the editable project it points back to.
+COPY --from=tools /opt/venv /opt/venv
+COPY --from=tools /work /work
 
+WORKDIR /hermes
 COPY . /hermes
+ENV UV_LINK_MODE=copy \
+    UV_PROJECT_ENVIRONMENT=/opt/hermes-venv
 # arize-otel is not a default Hermes dependency; the observability/arize plugin needs it to export.
 RUN uv sync --frozen --no-dev && uv pip install arize-otel
 
-# The isolated analyst home is mounted in by bin/hermes-docker; bubble-watch wrote its config.
-ENV HERMES_HOME=/work/.hermes-analyst \
+# `bubble-watch` comes from the tool-server venv; HERMES_BIN points at Hermes' own.
+ENV PATH=/opt/venv/bin:$PATH \
+    HERMES_BIN=/opt/hermes-venv/bin/hermes \
+    HERMES_HOME=/work/.hermes-analyst \
     TIRITH_ENABLED=false
 WORKDIR /work
 
-# `hermes chat -Q` prints the answer on stdout and its session id on stderr.
-ENTRYPOINT ["hermes"]
+# stdout is the MCP JSON-RPC transport.
+ENTRYPOINT ["bubble-watch", "hermes-mcp"]

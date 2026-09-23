@@ -6,6 +6,11 @@
 #   {uv_bin}         the uv executable that launches the MCP server
 # The `env:` block is generated — see below.
 #
+# TWO TOOL SERVERS, NOT ONE. The deterministic tools and the Hermes analyst are separate servers so
+# each runtime is one hop from the orchestrator and can be its own container. The alternative —
+# hosting the analyst inside the tool server — makes that server spawn a sibling container, which
+# means giving it the Docker socket.
+#
 # WHY HERMES IS NOT A SUBAGENT HERE. dsh ships an ACP subagent backend and Hermes ships an ACP
 # adapter, so wiring them together is config-only and was the obvious first choice. But Hermes'
 # ACP adapter builds an AIAgent directly and never touches hermes_cli's plugin dispatch, so NO
@@ -38,6 +43,18 @@
         transport: stdio
         command: '{uv_bin}'
         args: ['run', '--project', '{project_root}', 'bubble-watch', 'mcp']
+        cwd: '{project_root}'
+        failOnStartupError: true
+        toolCallTimeoutMs: 900000
+{mcp_env}
+
+    - id: mcp-hermes
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: hermes
+        transport: stdio
+        command: '{uv_bin}'
+        args: ['run', '--project', '{project_root}', 'bubble-watch', 'hermes-mcp']
         cwd: '{project_root}'
         failOnStartupError: true
         toolCallTimeoutMs: 900000

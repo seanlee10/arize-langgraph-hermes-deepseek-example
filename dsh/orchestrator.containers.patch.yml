@@ -15,7 +15,7 @@
 # for that run, which the driver set before launching dsh.
 #
 # render_orchestrator_patch() fills in:
-#   {mcp_image}    image to run
+#   {mcp_image} {hermes_image}   images to run, one per runtime
 #   {host_root}    project root ON THE HOST (the daemon resolves -v sources, and a sibling
 #                  container's mount source is always a host path)
 #   {workdir}      the project root as every container sees it
@@ -53,22 +53,50 @@
           - 'TAVILY_API_KEY'
           - '-e'
           - 'EXA_API_KEY'
-          # the analyst runs as a sibling container spawned from inside this one
-          - '-e'
-          - 'HERMES_BIN={workdir}/bin/hermes-docker'
-          - '-e'
-          - 'BUBBLE_WATCH_HOST_ROOT={host_root}'
-          - '-e'
-          - 'BUBBLE_WATCH_HERMES_IMAGE'
-          - '-v'
-          - '/var/run/docker.sock:/var/run/docker.sock'
-          - '-v'
+                    - '-v'
           - '{host_root}/state:{workdir}/state'
           - '-v'
           - '{host_root}/reports:{workdir}/reports'
+          - '{mcp_image}'
+        cwd: '{workdir}'
+        failOnStartupError: true
+        toolCallTimeoutMs: 900000
+{mcp_env}
+
+    - id: mcp-hermes
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: hermes
+        transport: stdio
+        command: docker
+        args:
+          - 'run'
+          - '-i'
+          - '--rm'
+          - '-e'
+          - 'TRACEPARENT'
+          - '-e'
+          - 'BUBBLE_WATCH_SESSION_ID'
+          - '-e'
+          - 'ARIZE_SPACE_ID'
+          - '-e'
+          - 'ARIZE_API_KEY'
+          - '-e'
+          - 'ARIZE_PROJECT_NAME'
+          - '-e'
+          - 'ARIZE_COLLECTOR_ENDPOINT'
+          - '-e'
+          - 'XAI_API_KEY'
+          - '-e'
+          - 'TAVILY_API_KEY'
+          - '-e'
+          - 'EXA_API_KEY'
+          # the analyst runs as a sibling container spawned from inside this one
+          - '-e'
+          - 'TIRITH_ENABLED'
           - '-v'
           - '{host_root}/.hermes-analyst:{workdir}/.hermes-analyst'
-          - '{mcp_image}'
+          - '{hermes_image}'
         cwd: '{workdir}'
         failOnStartupError: true
         toolCallTimeoutMs: 900000

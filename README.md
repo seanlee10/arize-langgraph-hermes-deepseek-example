@@ -106,7 +106,8 @@ uv run bubble-watch run --date 2026-09-18            # dsh orchestrates; report 
 uv run bubble-watch run --date 2026-09-18 --dry-run  # same, then restore the state file
 uv run bubble-watch run --no-agents                  # data + signals only: no dsh, no LLM at all
 uv run bubble-watch doctor                           # keys, dsh, the ACP launcher, the skill, the model
-uv run bubble-watch mcp                              # the tool server (dsh spawns this; stdout is JSON-RPC)
+uv run bubble-watch mcp                              # the deterministic tool server (dsh spawns this)
+uv run bubble-watch hermes-mcp                       # the analyst server (dsh spawns this too)
 uv run bubble-watch install-plugins                  # one-time: the dsh plugins the bundle lacks
 ```
 
@@ -210,9 +211,9 @@ Verified shape of one run (52 spans, single root):
 dsh                                 AGENT   ← the only root: the harness run itself
 ├── mcp__bubble__prior_state        TOOL    built live from the SDK's on_notification callback
 ├── mcp__bubble__prepare_brief      TOOL    real start/end, from event arrival
-├── mcp__bubble__hermes_analyst     TOOL    the delegation
+├── mcp__hermes__analyst            TOOL    the delegation
 ├── mcp__bubble__apply_gap_fills    TOOL
-├── mcp__bubble__hermes_analyst     TOOL    second view
+├── mcp__hermes__analyst            TOOL    second view
 ├── … web_fetch / write / mcp__bubble__save_run
 ├── LangGraph                       CHAIN   ← a different process, via TRACEPARENT
 │   ├── fetch_market_data
@@ -379,7 +380,8 @@ rather than a signal.
 src/bubble_watch/
   orchestrator.py  the driver: trace root, traceparent, run verification
   harness.py       dsh composition and launch; the isolated Hermes home; the child environment
-  mcp_server.py    the five tools, as an MCP stdio server      mcp_tools.py  their implementations
+  mcp_server.py    two MCP stdio servers: the deterministic tools, and the analyst
+  mcp_tools.py     the deterministic tools' implementations
   hermes_tool.py   the Hermes analyst: one-shot CLI per call, with its own span
   brief_graph.py   the LangGraph pipeline: fetch market data → compute signals
   signals.py       pure signal computation                      state_store.py  JSON persistence
@@ -392,10 +394,10 @@ dsh/
   plugins/                 web-search-tavily.mjs
 docker/
   Dockerfile.mcp-tools     built from this repo
-  Dockerfile.hermes        built from the Hermes checkout
+  Dockerfile.hermes        built from the Hermes checkout (copies bubble-watch from mcp-tools)
   Dockerfile.dsh-runner    built from the dsh checkout; carries the Docker CLI
   build.sh                 all three, with the right contexts
-bin/              dsh, hermes, dsh-docker, hermes-docker launchers
+bin/              dsh, hermes, dsh-docker launchers
 ```
 
 ## Tests

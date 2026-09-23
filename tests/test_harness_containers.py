@@ -24,11 +24,17 @@ def _patch(tmp_path, monkeypatch, traceparent="00-a-b-01", **env):
     return Path(render_orchestrator_patch(settings, traceparent)).read_text()
 
 
-def test_containers_mode_spawns_the_tool_server_with_docker_run(tmp_path, monkeypatch):
+def test_containers_mode_spawns_one_peer_container_per_runtime(tmp_path, monkeypatch):
     text = _patch(tmp_path, monkeypatch)
-    assert text.count("command: docker") == 1
-    assert "- '-i'" in text      # stdio stays stdio: dsh speaks JSON-RPC to the container
-    assert "- '--rm'" in text    # one container per run
+    assert text.count("command: docker") == 2   # the tool server and the analyst, side by side
+    assert text.count("- '-i'") == 2            # stdio stays stdio, both times
+    assert text.count("- '--rm'") == 2
+
+
+def test_containers_mode_needs_no_docker_socket(tmp_path, monkeypatch):
+    """Each runtime is one hop from the orchestrator, so no container spawns a sibling — which is
+    the only reason one would have needed the socket."""
+    assert "docker.sock" not in _patch(tmp_path, monkeypatch)
 
 
 def test_containers_mode_names_the_tool_server_image(tmp_path, monkeypatch):
