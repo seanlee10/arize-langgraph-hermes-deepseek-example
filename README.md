@@ -324,8 +324,10 @@ run. Measured breakdown of one run:
 | `web_search` | 1 | 104s | 18% |
 | everything deterministic | — | ~2s | 0% |
 
-**Set `TAVILY_API_KEY`** — `doctor` treats this as a required check, not an optional one. Without a
-search backend, dsh's `web_search` fails after ~147 seconds
+**Set `TAVILY_API_KEY`** — `doctor` treats this as a required check, not an optional one, and
+without it `web_search` is switched off entirely (`dsh/no-web-search.patch.yml`) so the model cannot
+waste a run discovering it is broken. Left enabled with no backend, that call fails after ~147
+seconds
 (`DeepSeek search has no API key`) and both the orchestrator and Hermes fall back to fetching pages
 one at a time — which is what those 35 `web_fetch` calls are. Tavily is wired for dsh through
 `dsh/plugins/web-search-tavily.mjs` and picked up natively by Hermes, so one key fixes both.
@@ -391,6 +393,7 @@ dsh/
   orchestrator.patch.yml            local: spawn the siblings directly
   orchestrator.containers.patch.yml containers: spawn `docker run -i` for each
   web-search.patch.yml     Tavily/Exa search backend for dsh
+  no-web-search.patch.yml  turns web_search off when neither key is set
   skills/bubble-watch/     SKILL.md — the procedure dsh follows
   plugins/                 web-search-tavily.mjs
 docker/

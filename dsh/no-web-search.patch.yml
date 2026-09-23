@@ -1,0 +1,16 @@
+# bubble-watch overlay: turn dsh's `web_search` tool OFF.
+#
+# Rendered only when neither TAVILY_API_KEY nor EXA_API_KEY is set. Without one of those, the web
+# service falls back to dsh's own DeepSeek backend, which needs a DEEPSEEK_API_KEY we do not have —
+# so every `web_search` call fails, and measured against xAI it takes about 147 seconds to do it.
+# The model then researches by fetching pages one at a time anyway.
+#
+# Offering a tool that cannot succeed is worse than not offering it: the model spends a couple of
+# minutes discovering that, once per run. `web_fetch` stays available, which is what it falls back
+# to regardless.
+#
+# Set a search key and this layer is not rendered at all — see search_patches().
+
+- id: tool-web
+  config:
+    search: false

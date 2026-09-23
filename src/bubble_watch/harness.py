@@ -18,6 +18,7 @@ from .config import PROJECT_ROOT, Settings
 from .hermes_tool import PLATFORM_ENV_PREFIXES, ensure_hermes_home
 
 SEARCH_PATCH_TEMPLATE = PROJECT_ROOT / "dsh" / "web-search.patch.yml"
+NO_SEARCH_PATCH_TEMPLATE = PROJECT_ROOT / "dsh" / "no-web-search.patch.yml"
 ORCHESTRATOR_PATCH_TEMPLATE = PROJECT_ROOT / "dsh" / "orchestrator.patch.yml"
 CONTAINERS_PATCH_TEMPLATE = PROJECT_ROOT / "dsh" / "orchestrator.containers.patch.yml"
 #: The project root as every container sees it (images are built with this as WORKDIR).
@@ -135,7 +136,8 @@ def launch_paths(settings: Settings) -> tuple[str, str, tuple[str, ...]]:
 
 def _patch_names(settings: Settings) -> tuple[str, ...]:
     """The patch layers this composition uses, in application order."""
-    search = ("web-search.patch.yml",) if (settings.tavily_api_key or settings.exa_api_key) else ()
+    search = (("web-search.patch.yml",) if (settings.tavily_api_key or settings.exa_api_key)
+              else ("no-web-search.patch.yml",))
     return (*search, "orchestrator.patch.yml")
 
 
@@ -237,7 +239,9 @@ def search_patches(settings: Settings) -> tuple[tuple[str, ...], dict[str, str]]
         entry = Path(settings.dsh_repo).expanduser() / EXA_PLUGIN_ENTRY
         patch = render_search_patch(settings.dsh_home, "exa", entry, "EXA_API_KEY")
         return (str(patch),), {"EXA_API_KEY": settings.exa_api_key}
-    return (), {}
+    # No backend: turn the tool off rather than let the model spend ~147s discovering it is broken.
+    patch = _render(NO_SEARCH_PATCH_TEMPLATE, Path(settings.dsh_home) / "no-web-search.patch.yml", {})
+    return (str(patch),), {}
 
 
 def orchestrator_patches(settings: Settings, traceparent: str = "",

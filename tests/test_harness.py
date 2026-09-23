@@ -59,7 +59,7 @@ def test_orchestrator_patches_layers_search_before_orchestration(tmp_path, monke
 def test_orchestrator_patches_still_orchestrates_without_a_search_key(tmp_path, monkeypatch):
     settings = _settings(tmp_path, monkeypatch)
     patches, _ = orchestrator_patches(settings)
-    assert [Path(p).name for p in patches] == ["orchestrator.patch.yml"]
+    assert [Path(p).name for p in patches] == ["no-web-search.patch.yml", "orchestrator.patch.yml"]
 
 
 def test_orchestrator_patch_template_is_shipped_in_the_repo():
@@ -199,3 +199,21 @@ def test_patch_declares_the_traceparent_once_the_run_has_one(tmp_path, monkeypat
     text = Path(render_orchestrator_patch(settings, traceparent="00-a-b-01")).read_text()
     assert "TRACEPARENT: !!js process.env.TRACEPARENT" in text
     assert "ARIZE_API_KEY: !!js process.env.ARIZE_API_KEY" in text
+
+
+def test_without_a_search_key_the_web_search_tool_is_turned_off(tmp_path, monkeypatch):
+    """dsh's default search backend needs a DeepSeek key we do not have, so the call fails after
+    ~147s on every run. Better to not offer the tool at all than to offer one that cannot work."""
+    settings = _settings(tmp_path, monkeypatch)        # no TAVILY, no EXA
+    patches, _ = orchestrator_patches(settings)
+    text = "\n".join(Path(p).read_text() for p in patches)
+    assert "id: tool-web" in text
+    assert "search: false" in text
+
+
+def test_with_a_search_key_the_tool_stays_on(tmp_path, monkeypatch):
+    settings = _settings(tmp_path, monkeypatch, TAVILY_API_KEY="tvly-k")
+    patches, _ = orchestrator_patches(settings)
+    text = "\n".join(Path(p).read_text() for p in patches)
+    assert "search: false" not in text
+    assert "searchProvider: tavily" in text
