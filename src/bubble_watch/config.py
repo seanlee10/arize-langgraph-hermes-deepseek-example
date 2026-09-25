@@ -32,6 +32,7 @@ class Settings:
     dsh_model: str
     writer_model: str
     analyst_timeout_s: float
+    run_timeout_s: float
     state_dir: Path
     reports_dir: Path
     arize_space_id: str
@@ -83,6 +84,9 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         dsh_model=_env("DSH_ANALYST_MODEL", DEFAULT_MODEL),
         writer_model=_env("WRITER_MODEL", DEFAULT_MODEL),
         analyst_timeout_s=float(_env("ANALYST_TIMEOUT_S", "600")),
+        # Bounds the WHOLE dsh run, so it must exceed the per-call analyst budget — otherwise one
+        # slow delegation aborts the run even though the tool would have returned.
+        run_timeout_s=float(_env("RUN_TIMEOUT_S", "3600")),
         state_dir=Path(_env("STATE_DIR", str(PROJECT_ROOT / "state"))),
         reports_dir=Path(_env("REPORTS_DIR", str(PROJECT_ROOT / "reports"))),
         arize_space_id=_env("ARIZE_SPACE_ID"),

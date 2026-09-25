@@ -94,6 +94,7 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "pytest" },
+    { name = "pyyaml" },
     { name = "ruff" },
 ]
 driver = [
@@ -115,6 +116,7 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "pytest", specifier = ">=9.1.1" },
+    { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "ruff", specifier = ">=0.16.8" },
 ]
 driver = [{ name = "deepseek-harness-sdk", editable = "/Users/sean/projects/deepseek-harness/python/sdk" }]

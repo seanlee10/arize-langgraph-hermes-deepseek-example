@@ -4,7 +4,7 @@ from zoneinfo import ZoneInfo
 import httpx
 from test_mcp_tools import FakeMarket
 
-from bubble_watch.cli import default_day, doctor_checks, main, report_path_for
+from bubble_watch.cli import default_day, doctor_checks, main, report_paths
 from bubble_watch.config import load_settings
 
 NY = ZoneInfo("America/New_York")
@@ -27,7 +27,7 @@ def test_seed_refuses_to_overwrite_without_force(tmp_path, monkeypatch, capsys):
 def test_report_path_is_the_day_and_the_ticker(tmp_path, monkeypatch):
     monkeypatch.setenv("REPORTS_DIR", str(tmp_path / "reports"))
     settings = load_settings(tmp_path / "none.env")
-    assert report_path_for(settings, dt.date(2026, 9, 18)).name == "2026-09-18-NVDA.md"
+    assert report_paths(settings, dt.date(2026, 9, 18))[0].name == "2026-09-18-NVDA.md"
 
 
 def _doctor_env(tmp_path, monkeypatch):
@@ -174,3 +174,23 @@ def test_doctor_is_satisfied_by_either_search_backend(tmp_path, monkeypatch):
     monkeypatch.setenv("TAVILY_API_KEY", "tvly-k")
     assert _checks(load_settings(tmp_path / "none.env"))["web search backend"][1] is True
     assert settings is not None
+
+
+def test_report_paths_split_between_host_and_container(tmp_path, monkeypatch):
+    """dsh writes from inside its container, so it must be told /work/reports/...; the driver
+    verifies the file on the host, where the same file appears under the mounted reports dir.
+    Telling dsh the host path makes it write somewhere the driver never looks."""
+    monkeypatch.setenv("REPORTS_DIR", str(tmp_path / "reports"))
+    monkeypatch.setenv("STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("BUBBLE_WATCH_DEPLOY", "containers")
+    host, in_dsh = report_paths(load_settings(tmp_path / "none.env"), dt.date(2026, 9, 18))
+    assert host == tmp_path / "reports" / "2026-09-18-NVDA.md"
+    assert in_dsh == "/work/reports/2026-09-18-NVDA.md"
+
+
+def test_report_paths_are_the_same_locally(tmp_path, monkeypatch):
+    monkeypatch.setenv("REPORTS_DIR", str(tmp_path / "reports"))
+    monkeypatch.setenv("STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("BUBBLE_WATCH_DEPLOY", "local")
+    host, in_dsh = report_paths(load_settings(tmp_path / "none.env"), dt.date(2026, 9, 18))
+    assert str(host) == in_dsh

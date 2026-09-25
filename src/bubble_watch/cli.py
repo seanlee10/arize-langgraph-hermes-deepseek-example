@@ -21,7 +21,9 @@ from opentelemetry import context
 
 from .config import Settings, load_settings, missing_required
 from .harness import (
+    CONTAINER_WORKDIR,
     ensure_dsh_home,
+    in_containers,
     install_profile_plugins,
     install_skill,
     make_harness_factory,
@@ -58,10 +60,18 @@ def state_path(settings: Settings) -> Path:
     return settings.state_dir / "NVDA.json"
 
 
-def report_path_for(settings: Settings, day: dt.date) -> Path:
-    """Where dsh is told to write the day's report; the driver verifies this exact path afterwards."""
+def report_paths(settings: Settings, day: dt.date) -> tuple[Path, str]:
+    """(path on the host, path as dsh sees it) for the day's report.
+
+    The same file, named twice. In containers mode dsh writes from inside its own container, where
+    the reports directory is mounted at `/work/reports`, while the driver checks the host path.
+    Telling dsh the host path makes it write somewhere the driver never looks, and the run then
+    fails its own "no report" check on every attempt.
+    """
     ticker = load_state(state_path(settings)).ticker if state_path(settings).exists() else "NVDA"
-    return settings.reports_dir / f"{day}-{ticker}.md"
+    name = f"{day}-{ticker}.md"
+    host = settings.reports_dir / name
+    return host, (f"{CONTAINER_WORKDIR}/reports/{name}" if in_containers(settings) else str(host))
 
 
 def market_provider(settings: Settings):
@@ -231,13 +241,14 @@ def cmd_run(args, settings: Settings) -> int:
         print(f"missing required settings: {', '.join(missing)} (set them in .env)")
         return 1
 
-    report_path = report_path_for(settings, day)
+    report_path, report_path_for_dsh = report_paths(settings, day)
     report_path.parent.mkdir(parents=True, exist_ok=True)
     backup = path.read_bytes() if args.dry_run else None
     provider = setup_tracing(settings)
     try:
         outcome = run_day(
-            day=day, report_path=report_path, tracer=get_tracer(provider),
+            day=day, report_path=report_path, report_path_for_dsh=report_path_for_dsh,
+            tracer=get_tracer(provider),
             harness_for=lambda traceparent, session_id: make_harness_factory(
                 settings, traceparent, session_id)())
     except OrchestratorError as exc:

@@ -90,7 +90,7 @@ def _render(template: Path, destination: Path, values: dict[str, str]) -> Path:
     return destination
 
 
-def render_search_patch(dsh_home: str, provider: str, plugin_entry: Path, api_key_env: str) -> Path:
+def render_search_patch(dsh_home: str, provider: str, plugin_entry: Any, api_key_env: str) -> Path:
     """Write the web-search overlay into DSH_HOME for one provider (see dsh/web-search.patch.yml)."""
     return _render(SEARCH_PATCH_TEMPLATE, Path(dsh_home) / "web-search.patch.yml",
                    {"provider": provider, "plugin_entry": str(plugin_entry), "api_key_env": api_key_env})
@@ -132,6 +132,18 @@ def launch_paths(settings: Settings) -> tuple[str, str, tuple[str, ...]]:
         home = f"{CONTAINER_WORKDIR}/.dsh"
         return home, CONTAINER_WORKDIR, tuple(f"{home}/{name}" for name in names)
     return settings.dsh_home, str(PROJECT_ROOT), tuple(str(Path(settings.dsh_home) / n) for n in names)
+
+
+def launch_kwargs(settings: Settings) -> dict[str, Any]:
+    """Where the harness *runs* versus what it is *told* its workspace is.
+
+    These are the same directory locally and different in containers mode, and the SDK keeps them
+    apart for exactly that reason: `runtime_cwd` is the host directory the launcher is spawned in,
+    while `cwd` is the workspace path sent during `initialize`. Passing the container path as both
+    makes the host `Popen` fail with FileNotFoundError before the harness ever starts.
+    """
+    dsh_home, cwd, patches = launch_paths(settings)
+    return {"dsh_home": dsh_home, "cwd": cwd, "runtime_cwd": str(PROJECT_ROOT), "patches": patches}
 
 
 def _patch_names(settings: Settings) -> tuple[str, ...]:
@@ -233,11 +245,15 @@ def search_patches(settings: Settings) -> tuple[tuple[str, ...], dict[str, str]]
     """(patch files, env) for dsh web_search: Tavily if TAVILY_API_KEY, else Exa, else none (dsh's
     default search needs a DeepSeek key, so the orchestrator would have web_fetch only)."""
     if settings.tavily_api_key:
-        patch = render_search_patch(settings.dsh_home, "tavily", TAVILY_PLUGIN, "TAVILY_API_KEY")
+        # Loaded by absolute path from inside the dsh process, so the path has to be the one that
+        # process sees: /work in a container, the checkout on the host.
+        entry = (f"{CONTAINER_WORKDIR}/dsh/plugins/web-search-tavily.mjs"
+                 if in_containers(settings) else str(TAVILY_PLUGIN))
+        patch = render_search_patch(settings.dsh_home, "tavily", entry, "TAVILY_API_KEY")
         return (str(patch),), {"TAVILY_API_KEY": settings.tavily_api_key}
     if settings.exa_api_key:
-        entry = Path(settings.dsh_repo).expanduser() / EXA_PLUGIN_ENTRY
-        patch = render_search_patch(settings.dsh_home, "exa", entry, "EXA_API_KEY")
+        repo = CONTAINER_DSH_REPO if in_containers(settings) else str(Path(settings.dsh_repo).expanduser())
+        patch = render_search_patch(settings.dsh_home, "exa", f"{repo}/{EXA_PLUGIN_ENTRY}", "EXA_API_KEY")
         return (str(patch),), {"EXA_API_KEY": settings.exa_api_key}
     # No backend: turn the tool off rather than let the model spend ~147s discovering it is broken.
     patch = _render(NO_SEARCH_PATCH_TEMPLATE, Path(settings.dsh_home) / "no-web-search.patch.yml", {})
@@ -266,11 +282,10 @@ def make_harness_factory(settings: Settings, traceparent: str = "",
         ensure_hermes_home(settings.hermes_home, settings.hermes_model or settings.dsh_model)
         install_skill(settings)
         orchestrator_patches(settings, traceparent, session_id)   # render every layer onto the host
-        dsh_home, cwd, patches = launch_paths(settings)   # …then name them as dsh will see them
         env = child_env(settings, traceparent, session_id)
         return DeepSeekHarness(
-            dsh_bin=settings.dsh_bin, dsh_home=dsh_home, cwd=cwd,
-            provider=settings.dsh_provider, model=settings.dsh_model, patches=patches, env=env,
-            initialize_timeout_seconds=120, request_timeout_seconds=settings.analyst_timeout_s)
+            dsh_bin=settings.dsh_bin, **launch_kwargs(settings),
+            provider=settings.dsh_provider, model=settings.dsh_model, env=env,
+            initialize_timeout_seconds=120, request_timeout_seconds=settings.run_timeout_s)
 
     return factory

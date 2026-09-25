@@ -7,6 +7,7 @@ parent on, and the check that a non-empty report actually landed on disk.
 from __future__ import annotations
 
 import datetime as dt
+import inspect
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -58,11 +59,17 @@ Rules:
 
 
 def _start_harness(harness_for: Any, traceparent: str, session_id: str) -> Any:
-    """Call the factory, tolerating the one-argument form used by tests and older callers."""
+    """Call the factory, tolerating the one-argument form used by tests and older callers.
+
+    The arity is decided from the signature rather than by catching TypeError: a TypeError raised
+    *inside* the factory would otherwise be mistaken for an arity mismatch, retried — re-running
+    every side effect — and finally reported as a misleading "missing argument" error.
+    """
     try:
-        return harness_for(traceparent, session_id)
-    except TypeError:
-        return harness_for(traceparent)
+        takes_two = len(inspect.signature(harness_for).parameters) >= 2
+    except (TypeError, ValueError):       # builtins and C callables have no introspectable signature
+        takes_two = True
+    return harness_for(traceparent, session_id) if takes_two else harness_for(traceparent)
 
 
 def _traceparent() -> str:
@@ -82,15 +89,18 @@ def session_ids(day: dt.date) -> tuple[str, str]:
     return f"{grouping}-{uuid.uuid4().hex[:8]}", grouping
 
 
-def run_day(*, day: dt.date, report_path: Path,
+def run_day(*, day: dt.date, report_path: Path, report_path_for_dsh: str = "",
             harness_for: Callable[[str, str], Any] | Callable[[str], Any],
             tracer: trace.Tracer) -> RunOutcome:
     """Run one day through dsh and return the verified outcome.
 
     `harness_for` receives this run's `traceparent`; it must reach the harness environment before
-    launch, because the ACP and MCP composition rows read it once, at load time.
+    launch, because the MCP composition rows read it once, at load time.
+
+    `report_path` is where the driver verifies the output; `report_path_for_dsh` is the same file
+    as the harness sees it, which differs when the harness runs in a container.
     """
-    task = build_task(day, report_path)
+    task = build_task(day, report_path_for_dsh or str(report_path))
     dsh_session, grouping = session_ids(day)
     # One root span, and it is the dsh run. dsh cannot open it itself — it emits OTel logs rather
     # than spans, and the traceparent has to exist before it launches, because the MCP composition

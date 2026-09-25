@@ -192,3 +192,27 @@ def test_the_run_publishes_its_session_key_to_the_tool_server(traced, tmp_path):
     _, grouping = session_ids(DAY)
     env = child_env(load_settings(tmp_path / "none.env"), "00-a-b-01", session_id=grouping)
     assert env["BUBBLE_WATCH_SESSION_ID"] == "bubble-watch-2026-09-18"
+
+
+def test_a_type_error_from_inside_the_factory_is_not_mistaken_for_an_arity_mismatch(traced, tmp_path):
+    """The two-argument probe must not swallow a genuine TypeError raised *by* the factory: doing
+    so retries it (re-running its side effects) and reports a misleading arity error instead."""
+    _, tracer = traced
+    report = tmp_path / "reports" / "2026-09-18-NVDA.md"
+    calls = []
+
+    def factory(traceparent, session_id):
+        calls.append(1)
+        raise TypeError("DeepSeekHarnessConfig() got an unexpected keyword argument 'runtime_cwd'")
+
+    with pytest.raises(TypeError, match="runtime_cwd"):
+        run_day(day=DAY, report_path=report, harness_for=factory, tracer=tracer)
+    assert calls == [1], "the factory must not be retried"
+
+
+def test_a_one_argument_factory_is_still_supported(traced, tmp_path):
+    _, tracer = traced
+    report = tmp_path / "reports" / "2026-09-18-NVDA.md"
+    harness = FakeHarness(report_path=report)
+    run_day(day=DAY, report_path=report, harness_for=lambda traceparent: harness, tracer=tracer)
+    assert harness.calls

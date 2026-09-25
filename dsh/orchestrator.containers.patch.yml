@@ -1,26 +1,26 @@
-# bubble-watch overlay TEMPLATE — containers mode. dsh orchestrates; the tool server runs in its own
-# container and dsh reaches it by spawning `docker run -i`.
+# bubble-watch overlay TEMPLATE — containers mode. Each runtime runs in its own container, and the
+# orchestrator reaches each one by spawning `docker run -i`. Both rows are MCP servers, so both are
+# direct children of the orchestrator: nothing spawns a sibling, and no container needs the Docker
+# socket.
 #
-# Why this shape: `docker run -i` is a LOCAL process that proxies stdio to a container, which is
-# exactly what MCP stdio already expects. Nothing about the protocol changes; only who is on the
-# other end of the pipe. The Hermes analyst lives inside the tool server (see hermes_tool.py for
-# why it is driven over its CLI rather than ACP), so this composition has one child, not two — but
-# the tool server spawns a Hermes container per call, which is why it gets the Docker socket.
+# `docker run -i` is a LOCAL process that proxies stdio, which is exactly what MCP stdio already
+# expects. Nothing about the protocol changes; only who is on the other end of the pipe.
 #
-# Trace context crosses in two hops, because a container does not inherit the parent's environment:
+# Trace context crosses in two hops, because a container does not inherit its parent's environment:
 #   1. `config.env` puts the value on the `docker` CLI process (the MCP backend scrubs ambient
 #      credential-shaped variables, so inheritance alone would lose XAI_API_KEY and friends).
-#   2. `-e NAME` (no `=value`) forwards that value from the CLI into the container.
-# The run's traceparent is never baked into this file — it is whatever dsh's own environment holds
-# for that run, which the driver set before launching dsh.
+#   2. `-e NAME` forwards that value from the CLI into the container.
+# EVERY name declared in `env` must also appear as `-e NAME`, or it renders as `undefined` inside
+# the container and dsh-mcp-client's z.union config silently rejects the whole row. A test asserts
+# this (test_every_env_var_the_containers_patch_declares_is_forwarded_into_the_container).
+#
+# The `env:` blocks are generated: only variables that actually have a value are declared.
 #
 # render_orchestrator_patch() fills in:
 #   {mcp_image} {hermes_image}   images to run, one per runtime
-#   {host_root}    project root ON THE HOST (the daemon resolves -v sources, and a sibling
-#                  container's mount source is always a host path)
-#   {workdir}      the project root as every container sees it
-# The `env:` block is generated: declaring a variable that is unset renders `undefined`, which
-# dsh-mcp-client's z.union config rejects, silently dropping the whole plugin.
+#   {host_root}                  project root ON THE HOST — the daemon resolves every -v source
+#                                against the host, wherever the CLI issuing it runs
+#   {workdir}                    the project root as every container sees it
 
 - insert:
     - id: mcp-bubble
@@ -53,7 +53,9 @@
           - 'TAVILY_API_KEY'
           - '-e'
           - 'EXA_API_KEY'
-                    - '-v'
+          - '-e'
+          - 'HERMES_REPO'
+          - '-v'
           - '{host_root}/state:{workdir}/state'
           - '-v'
           - '{host_root}/reports:{workdir}/reports'
@@ -86,14 +88,17 @@
           - '-e'
           - 'ARIZE_COLLECTOR_ENDPOINT'
           - '-e'
+          - 'ALPHAVANTAGE_API_KEY'
+          - '-e'
           - 'XAI_API_KEY'
           - '-e'
           - 'TAVILY_API_KEY'
           - '-e'
           - 'EXA_API_KEY'
-          # the analyst runs as a sibling container spawned from inside this one
           - '-e'
-          - 'TIRITH_ENABLED'
+          - 'HERMES_REPO'
+          - '-e'
+          - 'TIRITH_ENABLED=false'
           - '-v'
           - '{host_root}/.hermes-analyst:{workdir}/.hermes-analyst'
           - '{hermes_image}'
